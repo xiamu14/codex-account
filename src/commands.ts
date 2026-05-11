@@ -135,6 +135,8 @@ export async function updateCommand(context: CommandContext): Promise<void> {
     if (failures.length > 0) {
       throw new Error(`部分账号刷新失败：\n${failures.join('\n')}`);
     }
+
+    context.stdout.write(`\n${renderList(await store.listSummaries())}\n`);
   });
 }
 

@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
-import { addCommand, findSavedAccount, subCommand } from '../src/commands.ts';
+import { addCommand, findSavedAccount, subCommand, updateCommand } from '../src/commands.ts';
 import { AccountStore } from '../src/store.ts';
 import type { AccountSummary, CommandContext } from '../src/types.ts';
 
@@ -65,6 +65,31 @@ describe('addCommand', () => {
   });
 });
 
+describe('updateCommand', () => {
+  test('prints the account list after a successful update', async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, 'auth.json');
+    await writeFile(authPath, '{"token":"one"}', 'utf8');
+    const store = new AccountStore(context.appHome);
+    await store.createAccount('user@example.com', authPath, {
+      email: 'old@example.com',
+      planType: 'plus',
+      subscriptionExpiresAt: null
+    });
+    await store.setActive('user@example.com');
+
+    await updateCommand(context);
+
+    expect(output.text).toContain('已刷新 user@example.com。');
+    expect(output.text).toContain('* user@example.com');
+    expect(output.text).toContain('email         fresh@example.com');
+    expect(output.text).toContain('5h limit      80% left');
+  });
+});
+
 describe('findSavedAccount', () => {
   test('matches the current login by saved email or alias', () => {
     const accounts = [
@@ -123,4 +148,16 @@ class CaptureStream extends Writable {
     this.text += chunk.toString();
     callback();
   }
+}
+
+async function writeFakeCodex(root: string): Promise<string> {
+  const scriptPath = path.join(root, 'fake-codex.mjs');
+  await writeFile(scriptPath, [
+    '#!/usr/bin/env node',
+    'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) + "\\n");',
+    'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { account: { email: "fresh@example.com", planType: "plus" } } }) + "\\n");',
+    'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: { percentLeft: 80 }, weekly: { percentLeft: 55 } } } }) + "\\n");'
+  ].join('\n'), 'utf8');
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
 }
