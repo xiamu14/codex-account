@@ -50,6 +50,12 @@ export type AcpSnapshot = {
   quota: AccountQuota;
 };
 
+export type AcpBestEffortSnapshot = {
+  account: AcpAccountInfo;
+  quota: AccountQuota | null;
+  quotaError: string | null;
+};
+
 export type CommandContext = {
   appHome: string;
   codexHome: string;

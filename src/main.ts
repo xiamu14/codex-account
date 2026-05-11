@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { addCommand, activeCommand, deactiveCommand, deleteCommand, listCommand, subCommand, updateCommand } from './commands.ts';
+import { addCommand, activeCommand, deactiveCommand, deleteCommand, listCommand, loginCommand, refreshCommand, subCommand, updateCommand } from './commands.ts';
 import { resolveCodexBin } from './codex.ts';
 import { renderError } from './format.ts';
 import { resolveAppHome, resolveCodexHome } from './paths.ts';
@@ -9,11 +9,13 @@ function usage(): string {
   return [
     '用法:',
     '  cxa new <alias>                 或 cxa -n <alias>',
+    '  cxa login',
     '  cxa list                        或 cxa -l',
     '  cxa active [alias]              或 cxa -a [alias]',
     '  cxa deactive                    或 cxa -d',
     '  cxa delete [alias]',
     '  cxa update                      或 cxa -u',
+    '  cxa refresh [alias]             或 cxa -r [alias]',
     '  cxa subsciption <YYYY-MM-DD> [alias]  或 cxa -s <YYYY-MM-DD> [alias]'
   ].join('\n');
 }
@@ -46,6 +48,9 @@ async function run(argv: string[]): Promise<number> {
       await addCommand(context, alias);
       return 0;
     }
+    case 'login':
+      await loginCommand(context);
+      return 0;
     case 'list':
     case '-l':
       await listCommand(context);
@@ -64,6 +69,11 @@ async function run(argv: string[]): Promise<number> {
     case 'update':
     case '-u':
       await updateCommand(context);
+      return 0;
+    case 'refresh':
+    case '-r':
+      if (argv[2] !== undefined) throw new Error("refresh 只接收一个账号别名。");
+      await refreshCommand(context, argv[1]);
       return 0;
     case 'subsciption':
     case 'subscription':

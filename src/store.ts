@@ -137,6 +137,11 @@ export class AccountStore {
     return accountAuthPath(this.appHome, alias);
   }
 
+  async replaceAuth(alias: string, authSourcePath: string): Promise<void> {
+    await this.requireAccount(alias);
+    await copyFileAtomic(authSourcePath, accountAuthPath(this.appHome, alias));
+  }
+
   async readMeta(alias: string): Promise<AccountMeta | null> {
     const parsed = await readJsonIfExists(accountMetaPath(this.appHome, alias));
     if (parsed === null) return null;

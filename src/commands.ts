@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readAcpAccount, readAcpSnapshot } from "./acp.ts";
+import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
 import {
   activateAuth,
   cleanupRunHome,
@@ -86,6 +86,11 @@ export async function addCommand(
   });
 }
 
+export async function loginCommand(context: CommandContext): Promise<void> {
+  await runCodexLogin(context.codexBin, context.codexHome, context.cwd);
+  context.stdout.write("已完成登录。\n");
+}
+
 export async function listCommand(context: CommandContext): Promise<void> {
   const store = new AccountStore(context.appHome);
   context.stdout.write(`${renderList(await store.listSummaries())}\n`);
@@ -167,6 +172,8 @@ export async function updateCommand(context: CommandContext): Promise<void> {
     }
 
     const failures: string[] = [];
+    const warnings: string[] = [];
+    const deactivatedAliases: string[] = [];
     for (const account of state.accounts) {
       const alias = account.alias;
       let runHome: string | null = null;
@@ -176,7 +183,7 @@ export async function updateCommand(context: CommandContext): Promise<void> {
           codexHome: context.codexHome,
           authPath: await store.authPath(alias),
         });
-        const snapshot = await readAcpSnapshot(
+        const snapshot = await readAcpSnapshotBestEffort(
           context.codexBin,
           runHome,
           context.cwd,
@@ -186,8 +193,17 @@ export async function updateCommand(context: CommandContext): Promise<void> {
             clearSubscriptionIfNotSubscribed: true,
           }),
         );
-        await store.writeQuota(alias, snapshot.quota);
-        context.stdout.write(`已刷新 ${alias}\n`);
+        if (snapshot.quota !== null) {
+          await store.writeQuota(alias, snapshot.quota);
+          context.stdout.write(`已刷新 ${alias}\n`);
+        } else {
+          if (state.activeAccount === alias && isTokenInvalidated(snapshot.quotaError)) {
+            await store.setActive(null);
+            deactivatedAliases.push(alias);
+          }
+          warnings.push(formatQuotaWarning(alias, snapshot.quotaError));
+          context.stdout.write(`已刷新 ${alias}，额度读取失败，已保留旧额度。\n`);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         failures.push(`${alias}: ${message}`);
@@ -201,8 +217,51 @@ export async function updateCommand(context: CommandContext): Promise<void> {
     if (failures.length > 0) {
       throw new Error(`部分账号刷新失败：\n${failures.join("\n")}`);
     }
+    if (warnings.length > 0) {
+      context.stderr.write(`部分账号额度读取失败，账号信息已更新，旧额度已保留：\n${warnings.join("\n")}\n`);
+    }
+    if (deactivatedAliases.length > 0) {
+      context.stderr.write(`token 失效的 active 账号已自动 deactive：${deactivatedAliases.join(", ")}\n`);
+    }
 
     context.stdout.write(`\n${renderList(await store.listSummaries())}\n`);
+  });
+}
+
+export async function refreshCommand(
+  context: CommandContext,
+  alias?: string,
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const state = await store.loadState();
+    if (state.accounts.length === 0) {
+      throw new Error("没有账号可刷新 token。");
+    }
+    const target = alias ?? state.activeAccount;
+    if (target === null) {
+      throw new Error("请提供账号别名，或先运行 cxa active <alias>。");
+    }
+
+    await store.requireAccount(target);
+    const existingMeta = await store.readMeta(target);
+    const expectedEmail = existingMeta?.email ?? emailFromAlias(target);
+
+    const liveAuth = path.join(context.codexHome, "auth.json");
+    if (!(await pathExists(liveAuth))) {
+      throw new Error("当前 Codex 没有登录。请先运行 cxa login。");
+    }
+
+    const account = await readAcpAccount(
+      context.codexBin,
+      context.codexHome,
+      context.cwd,
+    );
+    await assertRefreshTarget(target, expectedEmail, account);
+    await store.replaceAuth(target, liveAuth);
+    await store.writeMeta(mergeMeta(target, existingMeta, account));
+
+    context.stdout.write(`已刷新 ${target} 的 token。\n`);
   });
 }
 
@@ -295,6 +354,47 @@ function isSubscriptionPlan(planType: string | null): boolean {
   return ["plus", "pro", "team", "enterprise", "business"].includes(
     planType.toLowerCase(),
   );
+}
+
+function formatQuotaWarning(alias: string, error: string | null): string {
+  if (isTokenInvalidated(error)) {
+    return `${alias}: token 已失效。运行 cxa login 后执行 cxa refresh ${alias}。`;
+  }
+  const firstLine = error?.split(/\r?\n/).find((line) => line.trim().length > 0);
+  return `${alias}: ${firstLine ?? "ACP 读取额度信息失败"}`;
+}
+
+function isTokenInvalidated(error: string | null): boolean {
+  return Boolean(error?.includes("token_invalidated") || error?.includes("401 Unauthorized"));
+}
+
+function emailFromAlias(alias: string): string | null {
+  return alias.includes("@") ? alias : null;
+}
+
+async function assertRefreshTarget(
+  alias: string,
+  expectedEmail: string | null,
+  account: AcpAccountInfo,
+): Promise<void> {
+  if (expectedEmail !== null) {
+    if (account.email === null) {
+      throw new Error(`无法确认登录账号是否为 ${expectedEmail}，已取消刷新 ${alias}。`);
+    }
+    if (account.email.toLowerCase() !== expectedEmail.toLowerCase()) {
+      throw new Error(
+        `登录账号是 ${account.email}，不是 ${expectedEmail}，已取消刷新 ${alias}。`,
+      );
+    }
+    return;
+  }
+
+  if (account.email !== null) {
+    const ok = await confirm(
+      `当前登录账号是 ${account.email}，确认用它刷新 ${alias} 吗？`,
+    );
+    if (!ok) throw new Error("已取消刷新。");
+  }
 }
 
 export function findSavedAccount(

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import type { AcpAccountInfo, AcpSnapshot, AccountQuota, LimitStatus } from './types.ts';
+import type { AcpAccountInfo, AcpBestEffortSnapshot, AcpSnapshot, AccountQuota, LimitStatus } from './types.ts';
 import { isNumber, isRecord, isString } from './guards.ts';
 
 type JsonRpcMessage = {
@@ -54,6 +54,21 @@ function methodCall(id: number, method: string): string {
 }
 
 export async function readAcpSnapshot(codexBin: string, codexHome: string, cwd: string): Promise<AcpSnapshot> {
+  const snapshot = await readAcpSnapshotBestEffort(codexBin, codexHome, cwd);
+  if (snapshot.quota === null) {
+    throw new Error(snapshot.quotaError ?? 'ACP 读取额度信息失败');
+  }
+  return {
+    account: snapshot.account,
+    quota: snapshot.quota
+  };
+}
+
+export async function readAcpSnapshotBestEffort(
+  codexBin: string,
+  codexHome: string,
+  cwd: string
+): Promise<AcpBestEffortSnapshot> {
   const output = await runAppServerRequests(codexBin, codexHome, cwd, [
     methodCall(2, 'account/read'),
     methodCall(3, 'account/rateLimits/read')
@@ -65,13 +80,20 @@ export async function readAcpSnapshot(codexBin: string, codexHome: string, cwd: 
   if (!accountMessage || accountMessage.error !== undefined) {
     throw new Error(formatAcpFailure('ACP 读取账号信息失败', output, accountMessage));
   }
+
+  const account = parseAccountInfo(accountMessage.result);
   if (!quotaMessage || quotaMessage.error !== undefined) {
-    throw new Error(formatAcpFailure('ACP 读取额度信息失败', output, quotaMessage));
+    return {
+      account,
+      quota: null,
+      quotaError: formatAcpFailure('ACP 读取额度信息失败', output, quotaMessage)
+    };
   }
 
   return {
-    account: parseAccountInfo(accountMessage.result),
-    quota: parseQuota(quotaMessage.result)
+    account,
+    quota: parseQuota(quotaMessage.result),
+    quotaError: null
   };
 }
 
