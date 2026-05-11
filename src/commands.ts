@@ -6,10 +6,9 @@ import {
   hasCodexAuth,
   prepareAcpHome,
   runCodexLogin,
-  runCodexLogout,
 } from "./codex.ts";
 import { launchCodexDesktop, quitCodexDesktop } from "./desktop.ts";
-import { pathExists } from "./fs.ts";
+import { pathExists, removePath } from "./fs.ts";
 import { renderList } from "./format.ts";
 import { withLock } from "./lock.ts";
 import { confirm, selectAlias } from "./prompt.ts";
@@ -118,11 +117,7 @@ export async function deactiveCommand(context: CommandContext): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     await quitCodexDesktop();
-    await runCodexLogout(
-      context.codexBin,
-      context.codexHome,
-      context.cwd,
-    ).catch(() => undefined);
+    await removePath(path.join(context.codexHome, "auth.json"));
     await store.setActive(null);
     context.stdout.write("已退出当前 Codex 账号。\n");
   });
@@ -143,11 +138,7 @@ export async function activeCommand(
       ));
     const authPath = await store.authPath(target);
     await quitCodexDesktop();
-    await runCodexLogout(
-      context.codexBin,
-      context.codexHome,
-      context.cwd,
-    ).catch(() => undefined);
+    await removePath(path.join(context.codexHome, "auth.json"));
     await activateAuth(authPath, context.codexHome);
 
     const account = await readAcpAccount(

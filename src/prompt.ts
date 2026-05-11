@@ -1,15 +1,13 @@
 import { createInterface } from 'node:readline/promises';
+import { isCancel } from '@clack/core';
+import { cancel, confirm as clackConfirm, select } from '@clack/prompts';
 
 export async function confirm(message: string, defaultValue = false): Promise<boolean> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const suffix = defaultValue ? 'Y/n' : 'y/N';
-    const answer = (await rl.question(`${message} (${suffix}) `)).trim().toLowerCase();
-    if (answer === '') return defaultValue;
-    return answer === 'y' || answer === 'yes';
-  } finally {
-    rl.close();
-  }
+  const value = await clackConfirm({
+    message,
+    initialValue: defaultValue
+  });
+  return unwrapPrompt(value);
 }
 
 export async function waitForEnter(message: string): Promise<void> {
@@ -29,20 +27,22 @@ export async function selectAlias(aliases: string[], action: string): Promise<st
     return aliases[0]!;
   }
 
-  process.stdout.write(`请选择要${action}的账号：\n`);
-  aliases.forEach((alias, index) => {
-    process.stdout.write(`  ${index + 1}. ${alias}\n`);
+  const value = await select({
+    message: `请选择要${action}的账号`,
+    options: aliases.map((alias) => {
+      return {
+        value: alias,
+        label: alias
+      };
+    })
   });
+  return unwrapPrompt(value);
+}
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await rl.question('输入序号：')).trim();
-    const index = Number.parseInt(answer, 10);
-    if (!Number.isInteger(index) || index < 1 || index > aliases.length) {
-      throw new Error('选择无效。');
-    }
-    return aliases[index - 1]!;
-  } finally {
-    rl.close();
+function unwrapPrompt<T>(value: T | symbol): T {
+  if (isCancel(value)) {
+    cancel('已取消。');
+    throw new Error('已取消。');
   }
+  return value;
 }
