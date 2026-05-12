@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import {
+  deactiveCommand,
+  deleteCommand,
   findSavedAccount,
   loginCommand,
   quotaCommand,
@@ -152,6 +154,56 @@ describe("loginCommand", () => {
   });
 });
 
+describe("deactiveCommand", () => {
+  test("only clears the current account without running codex logout", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeLogoutFailingCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"saved"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.setActive("user@example.com");
+    await writeLiveAuth(context, "live");
+
+    await deactiveCommand(context);
+
+    await expect(readFile(path.join(context.codexHome, "auth.json"), "utf8")).rejects.toThrow();
+    expect((await store.listSummaries())[0]?.isActive).toBe(false);
+    expect(await readFile(await store.authPath("user@example.com"), "utf8")).toBe('{"token":"saved"}');
+    expect(output.text).toContain("已退出当前 Codex 账号");
+  });
+});
+
+describe("deleteCommand", () => {
+  test("deletes only the stored account without running codex logout", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeLogoutFailingCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"saved"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await writeLiveAuth(context, "live");
+
+    await deleteCommand(context, "user@example.com");
+
+    expect(await store.listSummaries()).toHaveLength(0);
+    expect(await readFile(path.join(context.codexHome, "auth.json"), "utf8")).toBe('{"token":"live"}');
+    expect(output.text).toContain("已删除账号 user@example.com");
+  });
+});
+
 describe("quotaCommand", () => {
   test("prints the account list after a successful update", async () => {
     const output = new CaptureStream();
@@ -226,7 +278,7 @@ describe("quotaCommand", () => {
     await quotaCommand(context);
 
     expect(errorOutput.text).toContain(
-      "user@example.com: token 已失效。运行 cxa login 后执行 cxa refresh user@example.com。",
+      "user@example.com: token 已失效。运行 cxa refresh user@example.com 后重新登录。",
     );
   });
 
@@ -258,7 +310,7 @@ describe("quotaCommand", () => {
 });
 
 describe("refreshCommand", () => {
-  test("replaces auth for the requested account from the current Codex login", async () => {
+  test("logs in with an isolated Codex home and refreshes the requested account", async () => {
     const output = new CaptureStream();
     const context = await makeContext();
     context.stdout = output as unknown as NodeJS.WriteStream;
@@ -271,7 +323,7 @@ describe("refreshCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    await writeLiveAuth(context, "fresh");
+    await writeLiveAuth(context, "current");
 
     await refreshCommand(context, "user@example.com");
 
@@ -279,7 +331,7 @@ describe("refreshCommand", () => {
     const liveAuth = await readFile(path.join(context.codexHome, "auth.json"), "utf8");
     const meta = await store.readMeta("user@example.com");
     expect(savedAuth).toBe('{"token":"fresh"}');
-    expect(liveAuth).toBe('{"token":"fresh"}');
+    expect(liveAuth).toBe('{"token":"current"}');
     expect(meta?.email).toBe("user@example.com");
     expect(output.text).toContain("已刷新 user@example.com 的 token");
   });
@@ -296,7 +348,6 @@ describe("refreshCommand", () => {
       subscriptionExpiresAt: null,
     });
     await store.setActive("user@example.com");
-    await writeLiveAuth(context, "fresh");
 
     await refreshCommand(context);
 
@@ -320,7 +371,6 @@ describe("refreshCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    await writeLiveAuth(context, "fresh");
 
     await refreshCommand(context);
 
@@ -341,7 +391,6 @@ describe("refreshCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    await writeLiveAuth(context, "fresh");
 
     await expect(refreshCommand(context, "user@example.com")).rejects.toThrow(
       "不是 user@example.com",
@@ -535,6 +584,24 @@ async function writeRefreshFakeCodex(
       `    send({ jsonrpc: '2.0', id: message.id, result: { account: { email: ${JSON.stringify(email)}, planType: 'plus' } } });`,
       "  }",
       "});",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}
+
+async function writeLogoutFailingCodex(root: string): Promise<string> {
+  const scriptPath = path.join(root, "fake-logout-failing-codex.mjs");
+  await writeFile(
+    scriptPath,
+    [
+      "#!/usr/bin/env node",
+      "if (process.argv.includes('logout')) {",
+      "  process.stderr.write('logout must not be called\\n');",
+      "  process.exit(42);",
+      "}",
+      "process.exit(0);",
     ].join("\n"),
     "utf8",
   );

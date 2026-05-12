@@ -36,10 +36,11 @@ cxa active [alias]
 cxa deactive
 cxa delete [alias]
 cxa quota
+cxa refresh [alias]
 cxa subscription
 ```
 
-`active` 和 `delete` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。
+`active`、`delete` 和 `refresh` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。
 
 不提供 `cxa current`。当前账号信息由 Codex CLI 或 Codex Desktop 自身显示。
 
@@ -152,7 +153,7 @@ cxa quota
 2. 如果目标账号不存在，报错。
 3. 获取操作锁，避免和 `quota`、`delete`、`deactive` 并发。
 4. 退出 Codex Desktop。
-5. 对真实 `~/.codex` 执行 Codex 官方 logout 流程，清理当前登录。
+5. 删除真实 `~/.codex/auth.json`，只清掉当前 account 的登录态，不调用 `codex logout`。
 6. 使用复用的登录/激活逻辑，让目标账号成为真实 `~/.codex` 的当前账号。
 7. 通过 ACP 读取真实 `~/.codex` 当前账号，确认已切到目标账号。
 8. 更新 `accounts.json` 的 `activeAccount`。
@@ -166,7 +167,7 @@ cxa quota
 
 1. 获取操作锁。
 2. 退出 Codex Desktop。
-3. 对真实 `~/.codex` 执行 Codex 官方 logout 流程。
+3. 删除真实 `~/.codex/auth.json`，只退出当前 account，不调用 `codex logout`。
 4. 清空 `accounts.json` 的 `activeAccount`。
 5. 不删除 `cxa` 本地账号信息。
 
@@ -180,7 +181,7 @@ cxa quota
 2. 如果目标账号不存在，报错。
 3. 如果目标账号正处于 active 状态，提示用户先执行 `cxa deactive`，不直接删除。
 4. 只删除 `~/.codex-account/accounts/<alias>/` 和 `accounts.json` 里的记录。
-5. 不修改 `~/.codex`，不执行 Codex logout。
+5. 不修改 `~/.codex`，不调用 `codex logout`。
 
 ## quota 流程
 
@@ -202,6 +203,21 @@ cxa quota
 这里应异步执行，但要避免多个账号共用同一个可写 `~/.codex`。每个账号必须有自己的隔离运行目录，不能在真实 `~/.codex` 上同步来回切换，否则会和当前 Codex CLI / Desktop 状态互相影响。
 
 可以并发刷新多个账号，但需要控制并发数，例如 2 或 3，避免触发过多请求。
+
+## refresh 流程
+
+`cxa refresh [alias]` 负责刷新本地保存账号的 token：
+
+1. 如果未传 alias，展示本地账号选择列表。
+2. 如果目标账号不存在，报错。
+3. 获取操作锁，避免和 `active`、`delete`、`deactive`、`quota` 并发。
+4. 创建临时 `CODEX_HOME`，走和 `cxa login` 相同的账号登录流程。
+5. 登录完成后读取临时目录里的账号信息和 `auth.json`。
+6. 确认本次登录账号和目标账号匹配。
+7. 用临时目录里的 `auth.json` 替换目标账号本地保存的 token，并更新 `meta.json`。
+8. 清理临时目录。
+
+`refresh` 不读取真实 `~/.codex/auth.json`，不要求当前 Codex 已登录，也不修改当前 Codex 登录态。
 
 ## ACP 数据
 

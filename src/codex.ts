@@ -30,14 +30,6 @@ export async function resolveCodexBin(
   }
 }
 
-export async function runCodexLogout(
-  codexBin: string,
-  codexHome: string,
-  cwd: string,
-): Promise<void> {
-  await runCodex(codexBin, ["logout"], codexHome, cwd, "inherit");
-}
-
 export async function runCodexLogin(
   codexBin: string,
   accountHome: string,

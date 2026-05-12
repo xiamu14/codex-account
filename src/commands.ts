@@ -260,19 +260,26 @@ export async function refreshCommand(
     const existingMeta = await store.readMeta(target);
     const expectedEmail = existingMeta?.email ?? emailFromAlias(target);
 
-    const liveAuth = path.join(context.codexHome, "auth.json");
-    if (!(await pathExists(liveAuth))) {
-      throw new Error("当前 Codex 没有登录。请先运行 cxa login。");
-    }
+    await mkdir(runsRoot(context.appHome), { recursive: true });
+    const refreshHome = await mkdtemp(path.join(runsRoot(context.appHome), "refresh-"));
+    try {
+      const refreshAuth = path.join(refreshHome, "auth.json");
+      await runCodexLogin(context.codexBin, refreshHome, context.cwd);
+      if (!(await pathExists(refreshAuth))) {
+        throw new Error("登录完成后没有生成 auth.json。");
+      }
 
-    const account = await readAcpAccount(
-      context.codexBin,
-      context.codexHome,
-      context.cwd,
-    );
-    await assertRefreshTarget(target, expectedEmail, account);
-    await store.replaceAuth(target, liveAuth);
-    await store.writeMeta(mergeMeta(target, existingMeta, account));
+      const account = await readAcpAccount(
+        context.codexBin,
+        refreshHome,
+        context.cwd,
+      );
+      await assertRefreshTarget(target, expectedEmail, account);
+      await store.replaceAuth(target, refreshAuth);
+      await store.writeMeta(mergeMeta(target, existingMeta, account));
+    } finally {
+      await cleanupRunHome(refreshHome);
+    }
 
     context.stdout.write(`已刷新 ${target} 的 token。\n`);
   });
@@ -446,7 +453,7 @@ function isSubscriptionPlan(planType: string | null): boolean {
 
 function formatQuotaWarning(alias: string, error: string | null): string {
   if (isTokenInvalidated(error)) {
-    return `${alias}: token 已失效。运行 cxa login 后执行 cxa refresh ${alias}。`;
+    return `${alias}: token 已失效。运行 cxa refresh ${alias} 后重新登录。`;
   }
   const firstLine = error?.split(/\r?\n/).find((line) => line.trim().length > 0);
   return `${alias}: ${firstLine ?? "ACP 读取额度信息失败"}`;
@@ -479,7 +486,7 @@ async function assertRefreshTarget(
 
   if (account.email !== null) {
     const ok = await confirm(
-      `当前登录账号是 ${account.email}，确认用它刷新 ${alias} 吗？`,
+      `本次登录账号是 ${account.email}，确认用它刷新 ${alias} 吗？`,
     );
     if (!ok) throw new Error("已取消刷新。");
   }
