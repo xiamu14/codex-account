@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline/promises';
 import { isCancel } from '@clack/core';
-import { cancel, confirm as clackConfirm, select } from '@clack/prompts';
+import { cancel, confirm as clackConfirm, select, text } from '@clack/prompts';
+import type { TextOptions } from '@clack/prompts';
 
 export async function confirm(message: string, defaultValue = false): Promise<boolean> {
   const value = await clackConfirm({
@@ -17,6 +18,18 @@ export async function waitForEnter(message: string): Promise<void> {
   } finally {
     rl.close();
   }
+}
+
+export async function inputText(
+  message: string,
+  placeholder?: string,
+  validate?: (value: string | undefined) => string | undefined,
+): Promise<string> {
+  const options: TextOptions = { message };
+  if (placeholder !== undefined) options.placeholder = placeholder;
+  if (validate !== undefined) options.validate = validate;
+  const value = await text(options);
+  return unwrapPrompt(value);
 }
 
 export async function selectAlias(aliases: string[], action: string): Promise<string> {

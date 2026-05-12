@@ -1,23 +1,34 @@
 #!/usr/bin/env bun
-import { addCommand, activeCommand, deactiveCommand, deleteCommand, listCommand, loginCommand, refreshCommand, subCommand, updateCommand } from './commands.ts';
-import { resolveCodexBin } from './codex.ts';
-import { renderError } from './format.ts';
-import { resolveAppHome, resolveCodexHome } from './paths.ts';
-import type { CommandContext } from './types.ts';
+import {
+  activeCommand,
+  deactiveCommand,
+  deleteCommand,
+  listCommand,
+  loginCommand,
+  quotaCommand,
+  refreshCommand,
+  saveCommand,
+  subscriptionCommand,
+} from "./commands.ts";
+import { resolveCodexBin } from "./codex.ts";
+import { renderError } from "./format.ts";
+import { resolveAppHome, resolveCodexHome } from "./paths.ts";
+import type { CommandContext } from "./types.ts";
 
 function usage(): string {
   return [
-    '用法:',
-    '  cxa new <alias>                 或 cxa -n <alias>',
-    '  cxa login',
-    '  cxa list                        或 cxa -l',
-    '  cxa active [alias]              或 cxa -a [alias]',
-    '  cxa deactive                    或 cxa -d',
-    '  cxa delete [alias]',
-    '  cxa update                      或 cxa -u',
-    '  cxa refresh [alias]             或 cxa -r [alias]',
-    '  cxa subsciption <YYYY-MM-DD> [alias]  或 cxa -s <YYYY-MM-DD> [alias]'
-  ].join('\n');
+    "用法:",
+    "  bun cli --help    查看帮助",
+    "  cxa save          保存当前已登录账号",
+    "  cxa login         登录新账号并保存到本地",
+    "  cxa list          查看本地账号和缓存信息",
+    "  cxa active        激活账号",
+    "  cxa deactive      退出 Codex 账号",
+    "  cxa delete        删除本地保存的账号",
+    "  cxa quota         刷新所有账号的账号信息和额度缓存",
+    "  cxa refresh       刷新账号 token",
+    "  cxa subscription  选择账号并输入订阅到期日",
+  ].join("\n");
 }
 
 async function buildContext(): Promise<CommandContext> {
@@ -28,59 +39,61 @@ async function buildContext(): Promise<CommandContext> {
     cwd: process.cwd(),
     stdout: process.stdout,
     stderr: process.stderr,
-    stdin: process.stdin
+    stdin: process.stdin,
   };
 }
 
 async function run(argv: string[]): Promise<number> {
   const command = argv[0];
-  if (command === undefined || command === '--help' || command === '-h') {
+  if (command === undefined || command === "--help" || command === "-h") {
     process.stdout.write(`${usage()}\n`);
     return 0;
   }
 
   const context = await buildContext();
   switch (command) {
-    case 'new':
-    case '-n': {
-      const alias = argv[1];
-      if (alias === undefined) throw new Error('请提供账号别名。');
-      await addCommand(context, alias);
+    case "save": {
+      if (argv[1] !== undefined) {
+        throw new Error("save 不接收参数，请按提示输入账号别名。");
+      }
+      await saveCommand(context);
       return 0;
     }
-    case 'login':
+
+    case "login":
+      if (argv[1] !== undefined) {
+        throw new Error("login 不接收参数，请按提示输入账号别名。");
+      }
       await loginCommand(context);
       return 0;
-    case 'list':
-    case '-l':
+    case "list":
       await listCommand(context);
       return 0;
-    case 'active':
-    case '-a':
+    case "active":
       await activeCommand(context, argv[1]);
       return 0;
-    case 'deactive':
-    case '-d':
+    case "deactive":
       await deactiveCommand(context);
       return 0;
-    case 'delete':
+    case "delete":
       await deleteCommand(context, argv[1]);
       return 0;
-    case 'update':
-    case '-u':
-      await updateCommand(context);
+    case "quota":
+      await quotaCommand(context);
       return 0;
-    case 'refresh':
-    case '-r':
-      if (argv[2] !== undefined) throw new Error("refresh 只接收一个账号别名。");
+    case "refresh":
+      if (argv[2] !== undefined)
+        throw new Error("refresh 只接收一个账号别名。");
       await refreshCommand(context, argv[1]);
       return 0;
-    case 'subsciption':
-    case 'subscription':
-    case '-s': {
-      const dateText = argv[1];
-      if (dateText === undefined) throw new Error('请提供订阅到期日期，例如 cxa subsciption 2026-06-01。');
-      await subCommand(context, dateText, argv[2]);
+
+    case "subscription": {
+      if (argv[1] !== undefined) {
+        throw new Error(
+          "subscription 不接收参数，请按提示选择账号并输入订阅到期日期。",
+        );
+      }
+      await subscriptionCommand(context);
       return 0;
     }
     default:
@@ -88,9 +101,11 @@ async function run(argv: string[]): Promise<number> {
   }
 }
 
-run(process.argv.slice(2)).then((code) => {
-  process.exitCode = code;
-}).catch((error: unknown) => {
-  process.stderr.write(`${renderError(error)}\n`);
-  process.exitCode = 1;
-});
+run(process.argv.slice(2))
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((error: unknown) => {
+    process.stderr.write(`${renderError(error)}\n`);
+    process.exitCode = 1;
+  });

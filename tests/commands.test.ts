@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import {
-  addCommand,
   findSavedAccount,
   loginCommand,
+  quotaCommand,
   refreshCommand,
-  subCommand,
-  updateCommand,
+  resolveAccountTarget,
+  saveCommand,
+  updateSubscriptionDateCommand,
 } from "../src/commands.ts";
 import { AccountStore } from "../src/store.ts";
 import type { AccountSummary, CommandContext } from "../src/types.ts";
@@ -27,7 +28,7 @@ async function makeContext(): Promise<CommandContext> {
   };
 }
 
-describe("subCommand", () => {
+describe("updateSubscriptionDateCommand", () => {
   test("updates subscription expiry for an account", async () => {
     const context = await makeContext();
     const authPath = path.join(context.appHome, "auth.json");
@@ -39,7 +40,7 @@ describe("subCommand", () => {
       subscriptionExpiresAt: null,
     });
 
-    await subCommand(context, "2026-06-01", "user@example.com");
+    await updateSubscriptionDateCommand(context, "2026-06-01", "user@example.com");
 
     const meta = await store.readMeta("user@example.com");
     expect(meta?.subscriptionExpiresAt).toContain("2026-06-01");
@@ -47,17 +48,6 @@ describe("subCommand", () => {
 
   test("rejects invalid date format", async () => {
     const context = await makeContext();
-    await expect(
-      subCommand(context, "2026/06/01", "user@example.com"),
-    ).rejects.toThrow("YYYY-MM-DD");
-  });
-});
-
-describe("addCommand", () => {
-  test("only reports when the requested alias is already saved", async () => {
-    const output = new CaptureStream();
-    const context = await makeContext();
-    context.stdout = output as unknown as NodeJS.WriteStream;
     const authPath = path.join(context.appHome, "auth.json");
     await writeFile(authPath, '{"token":"one"}', "utf8");
     const store = new AccountStore(context.appHome);
@@ -67,7 +57,75 @@ describe("addCommand", () => {
       subscriptionExpiresAt: null,
     });
 
-    await addCommand(context, "user@example.com");
+    await expect(
+      updateSubscriptionDateCommand(context, "2026/06/01", "user@example.com"),
+    ).rejects.toThrow("YYYY-MM-DD");
+  });
+
+  test("falls back to the only stored account when alias is omitted", async () => {
+    const context = await makeContext();
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await updateSubscriptionDateCommand(context, "2026-06-01");
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.subscriptionExpiresAt).toContain("2026-06-01");
+  });
+});
+
+describe("saveCommand", () => {
+  test("rejects when Codex is not logged in", async () => {
+    const context = await makeContext();
+
+    await expect(saveCommand(context, "user@example.com")).rejects.toThrow(
+      "当前 Codex 没有登录",
+    );
+  });
+
+  test("saves the current Codex login with the requested alias", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome);
+    await mkdir(context.codexHome, { recursive: true });
+    await writeFile(path.join(context.codexHome, "auth.json"), '{"token":"live"}', "utf8");
+
+    await saveCommand(context, "work");
+
+    const store = new AccountStore(context.appHome);
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.alias).toBe("work");
+    expect(summaries[0]?.isActive).toBe(true);
+    expect(summaries[0]?.meta?.email).toBe("fresh@example.com");
+    expect(await readFile(await store.authPath("work"), "utf8")).toBe('{"token":"live"}');
+    expect(output.text).toContain("已保存并激活账号 work");
+  });
+
+  test("only reports when the current login is already saved", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome);
+    await mkdir(context.codexHome, { recursive: true });
+    await writeFile(path.join(context.codexHome, "auth.json"), '{"token":"live"}', "utf8");
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("saved", authPath, {
+      email: "fresh@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await saveCommand(context, "other");
 
     expect(output.text).toContain("已保存");
     expect(await store.listSummaries()).toHaveLength(1);
@@ -75,23 +133,26 @@ describe("addCommand", () => {
 });
 
 describe("loginCommand", () => {
-  test("logs in to the current Codex home without saving an account", async () => {
+  test("logs in with an isolated Codex home and saves the account without activating it", async () => {
     const output = new CaptureStream();
     const context = await makeContext();
     context.stdout = output as unknown as NodeJS.WriteStream;
     context.codexBin = await writeRefreshFakeCodex(context.appHome);
 
-    await loginCommand(context);
+    await loginCommand(context, "new-account");
 
-    const liveAuth = await readFile(path.join(context.codexHome, "auth.json"), "utf8");
     const store = new AccountStore(context.appHome);
-    expect(liveAuth).toBe('{"token":"fresh"}');
-    expect(await store.listSummaries()).toHaveLength(0);
-    expect(output.text).toContain("已完成登录");
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.alias).toBe("new-account");
+    expect(summaries[0]?.isActive).toBe(false);
+    expect(await readFile(await store.authPath("new-account"), "utf8")).toBe('{"token":"fresh"}');
+    await expect(readFile(path.join(context.codexHome, "auth.json"), "utf8")).rejects.toThrow();
+    expect(output.text).toContain("登录完成，已保存账号 new-account");
   });
 });
 
-describe("updateCommand", () => {
+describe("quotaCommand", () => {
   test("prints the account list after a successful update", async () => {
     const output = new CaptureStream();
     const context = await makeContext();
@@ -107,7 +168,7 @@ describe("updateCommand", () => {
     });
     await store.setActive("user@example.com");
 
-    await updateCommand(context);
+    await quotaCommand(context);
 
     expect(output.text).toContain("已刷新 user@example.com");
     expect(output.text).toContain("* user@example.com");
@@ -133,7 +194,7 @@ describe("updateCommand", () => {
       subscriptionExpiresAt: null,
     });
 
-    await updateCommand(context);
+    await quotaCommand(context);
 
     const meta = await store.readMeta("user@example.com");
     const quota = await store.readQuota("user@example.com");
@@ -162,7 +223,7 @@ describe("updateCommand", () => {
       subscriptionExpiresAt: null,
     });
 
-    await updateCommand(context);
+    await quotaCommand(context);
 
     expect(errorOutput.text).toContain(
       "user@example.com: token 已失效。运行 cxa login 后执行 cxa refresh user@example.com。",
@@ -186,7 +247,7 @@ describe("updateCommand", () => {
     });
     await store.setActive("user@example.com");
 
-    await updateCommand(context);
+    await quotaCommand(context);
 
     const summaries = await store.listSummaries();
     expect(summaries[0]?.isActive).toBe(false);
@@ -210,7 +271,7 @@ describe("refreshCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    await loginCommand(context);
+    await writeLiveAuth(context, "fresh");
 
     await refreshCommand(context, "user@example.com");
 
@@ -235,7 +296,7 @@ describe("refreshCommand", () => {
       subscriptionExpiresAt: null,
     });
     await store.setActive("user@example.com");
-    await loginCommand(context);
+    await writeLiveAuth(context, "fresh");
 
     await refreshCommand(context);
 
@@ -243,8 +304,14 @@ describe("refreshCommand", () => {
     expect(savedAuth).toBe('{"token":"fresh"}');
   });
 
-  test("requires a target account", async () => {
+  test("requires at least one stored account", async () => {
     const context = await makeContext();
+    await expect(refreshCommand(context)).rejects.toThrow("没有账号可刷新 token");
+  });
+
+  test("falls back to the only stored account when alias is omitted", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeRefreshFakeCodex(context.appHome);
     const authPath = path.join(context.appHome, "auth.json");
     await writeFile(authPath, '{"token":"old"}', "utf8");
     const store = new AccountStore(context.appHome);
@@ -253,8 +320,12 @@ describe("refreshCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
+    await writeLiveAuth(context, "fresh");
 
-    await expect(refreshCommand(context)).rejects.toThrow("请提供账号别名");
+    await refreshCommand(context);
+
+    const savedAuth = await readFile(await store.authPath("user@example.com"), "utf8");
+    expect(savedAuth).toBe('{"token":"fresh"}');
   });
 
   test("rejects login for a different account", async () => {
@@ -270,7 +341,7 @@ describe("refreshCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    await loginCommand(context);
+    await writeLiveAuth(context, "fresh");
 
     await expect(refreshCommand(context, "user@example.com")).rejects.toThrow(
       "不是 user@example.com",
@@ -321,6 +392,53 @@ describe("findSavedAccount", () => {
   });
 });
 
+describe("resolveAccountTarget", () => {
+  test("returns the explicit alias when one is provided", async () => {
+    await expect(
+      resolveAccountTarget(
+        {
+          version: 1,
+          accounts: [{ alias: "saved@example.com", createdAt: "2026-05-11T00:00:00.000Z" }],
+          activeAccount: null,
+          updatedAt: "2026-05-11T00:00:00.000Z",
+        },
+        "manual@example.com",
+        "刷新 token",
+      ),
+    ).resolves.toBe("manual@example.com");
+  });
+
+  test("returns null when there are no stored accounts", async () => {
+    await expect(
+      resolveAccountTarget(
+        {
+          version: 1,
+          accounts: [],
+          activeAccount: null,
+          updatedAt: "2026-05-11T00:00:00.000Z",
+        },
+        undefined,
+        "刷新 token",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  test("returns the only stored account when alias is omitted", async () => {
+    await expect(
+      resolveAccountTarget(
+        {
+          version: 1,
+          accounts: [{ alias: "saved@example.com", createdAt: "2026-05-11T00:00:00.000Z" }],
+          activeAccount: null,
+          updatedAt: "2026-05-11T00:00:00.000Z",
+        },
+        undefined,
+        "刷新 token",
+      ),
+    ).resolves.toBe("saved@example.com");
+  });
+});
+
 function makeSummary(
   alias: string,
   isActive: boolean,
@@ -353,6 +471,14 @@ class CaptureStream extends Writable {
     this.text += chunk.toString();
     callback();
   }
+}
+
+async function writeLiveAuth(
+  context: CommandContext,
+  token: string,
+): Promise<void> {
+  await mkdir(context.codexHome, { recursive: true });
+  await writeFile(path.join(context.codexHome, "auth.json"), `{"token":"${token}"}`, "utf8");
 }
 
 async function writeFakeCodex(
@@ -396,6 +522,10 @@ async function writeRefreshFakeCodex(
       "rl.on('line', (line) => {",
       "  const message = JSON.parse(line);",
       "  if (message.method === 'initialize') {",
+      "    if (message.params?.clientInfo?.name !== 'codex') {",
+      "      send({ jsonrpc: '2.0', id: message.id, error: { message: `unexpected client name: ${message.params?.clientInfo?.name}` } });",
+      "      return;",
+      "    }",
       "    send({ jsonrpc: '2.0', id: message.id, result: {} });",
       "  } else if (message.method === 'account/login/start') {",
       "    mkdirSync(process.env.CODEX_HOME, { recursive: true });",

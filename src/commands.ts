@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
 import {
   activateAuth,
@@ -11,83 +12,108 @@ import { launchCodexDesktop, quitCodexDesktop } from "./desktop.ts";
 import { pathExists, removePath } from "./fs.ts";
 import { renderList } from "./format.ts";
 import { withLock } from "./lock.ts";
-import { confirm, selectAlias } from "./prompt.ts";
+import { runsRoot } from "./paths.ts";
+import { confirm, inputText, selectAlias } from "./prompt.ts";
 import { AccountStore, assertAlias } from "./store.ts";
 import type {
   AccountMeta,
   AccountSummary,
   AcpAccountInfo,
   CommandContext,
+  AccountsState,
 } from "./types.ts";
 
-export async function addCommand(
+export async function saveCommand(
   context: CommandContext,
-  alias: string,
+  alias?: string,
 ): Promise<void> {
-  assertAlias(alias);
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
-    if (await store.hasAccount(alias)) {
-      context.stdout.write(`账号 ${alias} 已保存，没有添加新账号。\n`);
-      return;
+    const liveAuth = path.join(context.codexHome, "auth.json");
+    if (!(await hasCodexAuth(context.codexHome))) {
+      throw new Error("当前 Codex 没有登录。请先运行 cxa login。");
     }
 
-    const liveAuth = path.join(context.codexHome, "auth.json");
-    if (await hasCodexAuth(context.codexHome)) {
-      const account = await readAcpAccount(
-        context.codexBin,
-        context.codexHome,
-        context.cwd,
-      );
-      const savedAccount = findSavedAccount(
-        await store.listSummaries(),
-        account,
-      );
-      if (savedAccount === null) {
-        await confirmAccountAlias(account, alias);
-        await store.createAccount(alias, liveAuth, account);
-        await store.setActive(alias);
-        context.stdout.write(`已添加并激活账号 ${alias}。\n`);
-        return;
-      }
-
+    const account = await readAcpAccount(
+      context.codexBin,
+      context.codexHome,
+      context.cwd,
+    );
+    const savedAccount = findSavedAccount(
+      await store.listSummaries(),
+      account,
+    );
+    if (savedAccount !== null) {
       context.stdout.write(
         `当前登录账号已保存为 ${savedAccount.alias}，没有添加新账号。\n`,
       );
       return;
     }
 
-    await runCodexLogin(context.codexBin, context.codexHome, context.cwd);
-    if (!(await pathExists(liveAuth))) {
-      throw new Error("登录完成后没有生成 auth.json。");
-    }
-    const account = await readAcpAccount(
-      context.codexBin,
-      context.codexHome,
-      context.cwd,
-    ).catch(() => ({
-      email: null,
-      planType: null,
-      subscriptionExpiresAt: null,
-    }));
-    const savedAccount = findSavedAccount(await store.listSummaries(), account);
-    if (savedAccount !== null) {
-      context.stdout.write(
-        `该账号已保存为 ${savedAccount.alias}，没有添加新账号。\n`,
-      );
+    const target = alias ?? await inputText(
+      "请输入账号别名",
+      account.email ?? "name@example.com",
+      validateAlias,
+    );
+    assertAlias(target);
+    if (await store.hasAccount(target)) {
+      context.stdout.write(`账号 ${target} 已保存，没有添加新账号。\n`);
       return;
     }
-    await confirmAccountAlias(account, alias);
-    await store.createAccount(alias, liveAuth, account);
-    await store.setActive(alias);
-    await launchCodexDesktop();
-    context.stdout.write(`已添加并激活账号 ${alias}。\n`);
+    await store.createAccount(target, liveAuth, account);
+    await store.setActive(target);
+    context.stdout.write(`已保存并激活账号 ${target}。\n`);
   });
 }
 
-export async function loginCommand(context: CommandContext): Promise<void> {
-  await runCodexLogin(context.codexBin, context.codexHome, context.cwd);
-  context.stdout.write("已完成登录。\n");
+export async function loginCommand(
+  context: CommandContext,
+  alias?: string,
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const target = alias ?? await inputText(
+      "请输入账号别名",
+      "name@example.com",
+      validateAlias,
+    );
+    assertAlias(target);
+    if (await store.hasAccount(target)) {
+      context.stdout.write(`账号 ${target} 已保存，没有添加新账号。\n`);
+      return;
+    }
+
+    await mkdir(runsRoot(context.appHome), { recursive: true });
+    const loginHome = await mkdtemp(path.join(runsRoot(context.appHome), "login-"));
+    try {
+      const loginAuth = path.join(loginHome, "auth.json");
+      await runCodexLogin(context.codexBin, loginHome, context.cwd);
+      if (!(await pathExists(loginAuth))) {
+        throw new Error("登录完成后没有生成 auth.json。");
+      }
+
+      const account = await readAcpAccount(
+        context.codexBin,
+        loginHome,
+        context.cwd,
+      );
+      const savedAccount = findSavedAccount(
+        await store.listSummaries(),
+        account,
+      );
+      if (savedAccount !== null) {
+        context.stdout.write(
+          `登录完成。该账号已保存为 ${savedAccount.alias}，没有添加新账号。\n`,
+        );
+        return;
+      }
+
+      await store.createAccount(target, loginAuth, account);
+      context.stdout.write(`登录完成，已保存账号 ${target}。\n`);
+    } finally {
+      await cleanupRunHome(loginHome);
+    }
+  });
 }
 
 export async function listCommand(context: CommandContext): Promise<void> {
@@ -102,12 +128,10 @@ export async function deleteCommand(
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
-    const target =
-      alias ??
-      (await selectAlias(
-        state.accounts.map((account) => account.alias),
-        "删除",
-      ));
+    const target = requireAccountTarget(
+      await resolveAccountTarget(state, alias, "删除"),
+      "没有可删除的账号。",
+    );
     await store.deleteAccount(target);
     context.stdout.write(`已删除账号 ${target}。\n`);
   });
@@ -130,12 +154,10 @@ export async function activeCommand(
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
-    const target =
-      alias ??
-      (await selectAlias(
-        state.accounts.map((account) => account.alias),
-        "激活",
-      ));
+    const target = requireAccountTarget(
+      await resolveAccountTarget(state, alias, "激活"),
+      "没有可激活的账号。",
+    );
     const authPath = await store.authPath(target);
     await quitCodexDesktop();
     await removePath(path.join(context.codexHome, "auth.json"));
@@ -154,7 +176,7 @@ export async function activeCommand(
   });
 }
 
-export async function updateCommand(context: CommandContext): Promise<void> {
+export async function quotaCommand(context: CommandContext): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
@@ -229,10 +251,10 @@ export async function refreshCommand(
     if (state.accounts.length === 0) {
       throw new Error("没有账号可刷新 token。");
     }
-    const target = alias ?? state.activeAccount;
-    if (target === null) {
-      throw new Error("请提供账号别名，或先运行 cxa active <alias>。");
-    }
+    const target = requireAccountTarget(
+      await resolveAccountTarget(state, alias, "刷新 token"),
+      "请提供账号别名，或先运行 cxa active <alias>。",
+    );
 
     await store.requireAccount(target);
     const existingMeta = await store.readMeta(target);
@@ -256,38 +278,93 @@ export async function refreshCommand(
   });
 }
 
-export async function subCommand(
-  context: CommandContext,
-  dateText: string,
-  alias?: string,
-): Promise<void> {
-  const subscriptionExpiresAt = parseSubscriptionDate(dateText);
+export async function subscriptionCommand(context: CommandContext): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
     if (state.accounts.length === 0) {
       throw new Error("没有账号可更新订阅日期。");
     }
-    const target =
-      alias ??
-      state.activeAccount ??
-      (await selectAlias(
-        state.accounts.map((account) => account.alias),
-        "更新订阅日期",
-      ));
-    await store.requireAccount(target);
-    const meta = await store.readMeta(target);
-    const now = new Date().toISOString();
-    await store.writeMeta({
-      alias: target,
-      email: meta?.email ?? null,
-      planType: meta?.planType ?? null,
-      subscriptionExpiresAt,
-      createdAt: meta?.createdAt ?? now,
-      updatedAt: now,
-    });
+    const target = requireAccountTarget(
+      await resolveAccountTarget(state, undefined, "更新订阅日期"),
+      "没有可更新订阅日期的账号。",
+    );
+    const dateText = await inputText(
+      "请输入订阅到期日期",
+      "YYYY-MM-DD",
+      validateSubscriptionDate,
+    );
+    await updateSubscriptionDate(store, target, dateText);
     context.stdout.write(`已更新 ${target} 的订阅到期日期为 ${dateText}。\n`);
   });
+}
+
+export async function updateSubscriptionDateCommand(
+  context: CommandContext,
+  dateText: string,
+  alias?: string,
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const state = await store.loadState();
+    if (state.accounts.length === 0) {
+      throw new Error("没有账号可更新订阅日期。");
+    }
+    const target = requireAccountTarget(
+      await resolveAccountTarget(state, alias, "更新订阅日期"),
+      "没有可更新订阅日期的账号。",
+    );
+    await updateSubscriptionDate(store, target, dateText);
+    context.stdout.write(`已更新 ${target} 的订阅到期日期为 ${dateText}。\n`);
+  });
+}
+
+async function updateSubscriptionDate(
+  store: AccountStore,
+  alias: string,
+  dateText: string,
+): Promise<void> {
+  const subscriptionExpiresAt = parseSubscriptionDate(dateText);
+  await store.requireAccount(alias);
+  const meta = await store.readMeta(alias);
+  const now = new Date().toISOString();
+  await store.writeMeta({
+    alias,
+    email: meta?.email ?? null,
+    planType: meta?.planType ?? null,
+    subscriptionExpiresAt,
+    createdAt: meta?.createdAt ?? now,
+    updatedAt: now,
+  });
+}
+
+export async function resolveAccountTarget(
+  state: AccountsState,
+  alias: string | undefined,
+  action: string,
+): Promise<string | null> {
+  if (alias !== undefined) {
+    return alias;
+  }
+
+  const aliases = state.accounts.map((account) => account.alias);
+  if (aliases.length === 0) {
+    return null;
+  }
+  if (aliases.length === 1) {
+    return aliases[0]!;
+  }
+  return selectAlias(aliases, action);
+}
+
+function requireAccountTarget(
+  target: string | null,
+  message: string,
+): string {
+  if (target === null) {
+    throw new Error(message);
+  }
+  return target;
 }
 
 function mergeMeta(
@@ -320,7 +397,7 @@ function mergeMeta(
 function parseSubscriptionDate(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error(
-      "订阅日期格式应为 YYYY-MM-DD，例如 cxa subsciption 2026-06-01。",
+      "订阅日期格式应为 YYYY-MM-DD，例如 2026-06-01。",
     );
   }
   const date = new Date(`${value}T23:59:59`);
@@ -338,6 +415,26 @@ function parseSubscriptionDate(value: string): string {
     throw new Error("订阅日期无效。");
   }
   return date.toISOString();
+}
+
+function validateSubscriptionDate(value: string | undefined): string | undefined {
+  try {
+    if (value === undefined) return "请输入订阅日期。";
+    parseSubscriptionDate(value);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function validateAlias(value: string | undefined): string | undefined {
+  try {
+    if (value === undefined) return "请输入账号别名。";
+    assertAlias(value);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function isSubscriptionPlan(planType: string | null): boolean {
@@ -404,16 +501,4 @@ export function findSavedAccount(
     );
   }
   return accounts.find((summary) => summary.isActive) ?? null;
-}
-
-async function confirmAccountAlias(
-  account: AcpAccountInfo,
-  alias: string,
-): Promise<void> {
-  if (account.email !== null && account.email !== alias) {
-    const ok = await confirm(
-      `当前 Codex 登录账号是 ${account.email}，仍然保存为 ${alias} 吗？`,
-    );
-    if (!ok) throw new Error("已取消添加。");
-  }
 }

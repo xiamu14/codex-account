@@ -21,7 +21,7 @@
 - 放弃 Desktop App，统一走 CLI。
 - 放弃自动切号，降低触发手机号验证、风控和登录态异常的风险。
 - 账号切换必须由用户手动执行。
-- 额度只通过 `cxa update` 主动刷新。
+- 额度只通过 `cxa quota` 主动刷新。
 - 额度读取只走 Codex ACP 协议，失败就报错并提示用户重试，不做 `/status` 文本兜底。
 - 不自动填写浏览器账号和密码。
 - 删除账号只删除 `cxa` 本地保存的信息，不修改 `~/.codex`。
@@ -29,20 +29,21 @@
 ## 命令
 
 ```bash
-cxa add <alias>
+cxa save
+cxa login
 cxa list
 cxa active [alias]
 cxa deactive
 cxa delete [alias]
-cxa update
-cxa sub <YYYY-MM-DD> [alias]
+cxa quota
+cxa subscription
 ```
 
 `active` 和 `delete` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。
 
 不提供 `cxa current`。当前账号信息由 Codex CLI 或 Codex Desktop 自身显示。
 
-`sub` 用于手动维护订阅到期日期。未传 alias 时优先更新当前 active 账号；如果没有 active 账号且本地有多个账号，则进入选择列表。
+`subscription` 用于手动维护订阅到期日期。多个账号时进入选择列表，随后用输入框填写日期；只有一个账号时直接更新这个账号。
 
 ## 本地目录
 
@@ -66,10 +67,10 @@ cxa sub <YYYY-MM-DD> [alias]
 └── runs/
 ```
 
-`alias` 必须由用户提供，且应该是可读性良好的名字，推荐直接使用邮箱，例如：
+`alias` 必须由用户在保存账号时输入，且应该是可读性良好的名字，推荐直接使用邮箱，例如：
 
 ```bash
-cxa add xxx@gmail.com
+cxa save
 ```
 
 不要自动创建 `default` 这类不明确名称。
@@ -91,33 +92,34 @@ cxa add xxx@gmail.com
 
 账号详情和额度缓存放在各账号目录下，不塞进一个大文件。
 
-## add 流程
+## save 流程
 
-`cxa add <alias>` 前置检查：
+`cxa save` 前置检查：
 
 1. 读取 `accounts.json`。
-2. 如果已存在同名账号，直接报错，不进入登录流程。
-3. 检查真实 `~/.codex/auth.json` 是否存在。
+2. 检查真实 `~/.codex/auth.json` 是否存在；不存在则提示先运行 `cxa login` 并退出。
+3. 使用 ACP 读取当前 Codex 账号信息。
+4. 如果当前登录账号已经保存，提示已保存并退出。
+5. 如果未保存，提示用户输入 alias。
+6. 如果 alias 已存在，提示已保存并退出。
+7. 保存当前登录信息到 `~/.codex-account/accounts/<alias>/auth.json`，保存账号信息到 `meta.json`，并设为当前 active 账号。
 
-如果真实 `~/.codex` 已有登录信息：
+`save` 只保存当前已经登录的账号，不主动发起登录流程。
 
-1. 使用 ACP 读取当前 Codex 账号信息。
-2. 如果读取到的邮箱和 `<alias>` 一致，保存当前登录信息到 `~/.codex-account/accounts/<alias>/auth.json`。
-3. 如果读取到的邮箱和 `<alias>` 不一致，提示用户确认是否仍然绑定为这个别名。
-4. 保存账号信息到 `meta.json`。
+## login 流程
 
-如果真实 `~/.codex` 没有登录信息：
+`cxa login` 负责登录一个新账号并保存为本地账号：
 
-1. 使用隔离账号目录作为 `CODEX_HOME`。
-2. 调用 `codex login`。
-3. 尽量拦截或展示登录链接，让用户自行在浏览器完成登录。
-4. 不自动填写账号、密码、验证码。
-5. 用户确认登录完成后，检查隔离账号目录是否生成 `auth.json`。
-6. 成功后保存该账号。
+1. 先提示用户输入 alias。
+2. 如果 alias 已存在，提示已保存并退出，不发起登录。
+3. 使用隔离的临时 `CODEX_HOME` 发起登录，不检查、不读取、不复用真实 `~/.codex` 的当前登录状态。
+4. 展示登录链接并等待用户完成登录。
+5. 登录完成后从临时目录读取账号信息和 `auth.json`。
+6. 如果这个登录账号已按邮箱保存过，提示已保存并退出，不重复创建。
+7. 如果未保存，则保存到 `~/.codex-account/accounts/<alias>/`。
+8. 登录成功后不设置为当前 active 账号，也不修改真实 `~/.codex`。
 
-登录逻辑要独立封装，供 `add` 和 `active` 复用。
-
-新账号添加成功后，不立刻密集请求账号信息和额度。可以延迟约 1 分钟后再用 ACP 拉取 account 和 quota，也可以提示用户稍后执行 `cxa update`。
+新账号添加成功后，不立刻密集请求账号信息和额度。可以延迟约 1 分钟后再用 ACP 拉取 account 和 quota，也可以提示用户稍后执行 `cxa quota`。
 
 ## list 流程
 
@@ -137,7 +139,7 @@ cxa add xxx@gmail.com
 没有缓存时显示 `unknown`，并提示用户运行：
 
 ```bash
-cxa update
+cxa quota
 ```
 
 订阅到期日期由用户手动维护。日期临近到期前 2 天时，`list` 需要突出提示；如果已经过期，也要明显提示。
@@ -148,7 +150,7 @@ cxa update
 
 1. 如果未传 alias，展示本地账号选择列表。
 2. 如果目标账号不存在，报错。
-3. 获取操作锁，避免和 `update`、`delete`、`deactive` 并发。
+3. 获取操作锁，避免和 `quota`、`delete`、`deactive` 并发。
 4. 退出 Codex Desktop。
 5. 对真实 `~/.codex` 执行 Codex 官方 logout 流程，清理当前登录。
 6. 使用复用的登录/激活逻辑，让目标账号成为真实 `~/.codex` 的当前账号。
@@ -180,9 +182,9 @@ cxa update
 4. 只删除 `~/.codex-account/accounts/<alias>/` 和 `accounts.json` 里的记录。
 5. 不修改 `~/.codex`，不执行 Codex logout。
 
-## update 流程
+## quota 流程
 
-`cxa update` 负责刷新所有账号的账号信息和额度信息。
+`cxa quota` 负责刷新所有账号的账号信息和额度信息。
 
 每个账号都使用隔离目录执行 ACP：
 

@@ -3,7 +3,7 @@ import type { AccountSummary, LimitStatus } from './types.ts';
 
 export function renderList(accounts: AccountSummary[]): string {
   if (accounts.length === 0) {
-    return '没有账号。请先运行 cxa new <alias>。';
+    return '没有账号。请先登录 Codex，然后运行 cxa save。';
   }
   return sortAccountsForList(accounts).map(renderAccount).join('\n\n');
 }
