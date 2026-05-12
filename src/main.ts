@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import {
   activeCommand,
+  callCommand,
   deactiveCommand,
   deleteCommand,
   listCommand,
@@ -25,6 +26,8 @@ function usage(): string {
     "  cxa active        激活账号",
     "  cxa deactive      退出 Codex 账号",
     "  cxa delete        删除本地保存的账号",
+    "  cxa call          给所有账号发一条极短消息，激活 quota reset",
+    "  cxa call --select 选择账号并发送极短消息",
     "  cxa quota         刷新所有账号的账号信息和额度缓存",
     "  cxa refresh       刷新账号 token",
     "  cxa subscription  选择账号并输入订阅到期日",
@@ -77,6 +80,14 @@ async function run(argv: string[]): Promise<number> {
       return 0;
     case "delete":
       await deleteCommand(context, argv[1]);
+      return 0;
+    case "call":
+      if (argv[1] !== undefined && argv[1] !== "--select") {
+        throw new Error("call 不接收账号别名。请使用 cxa call 或 cxa call --select。");
+      }
+      if (argv[2] !== undefined)
+        throw new Error("call 只支持 --select 参数。");
+      await callCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "quota":
       await quotaCommand(context);

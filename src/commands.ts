@@ -6,6 +6,7 @@ import {
   cleanupRunHome,
   hasCodexAuth,
   prepareAcpHome,
+  runCodexCall,
   runCodexLogin,
 } from "./codex.ts";
 import { launchCodexDesktop, quitCodexDesktop } from "./desktop.ts";
@@ -13,7 +14,7 @@ import { pathExists, removePath } from "./fs.ts";
 import { renderList } from "./format.ts";
 import { withLock } from "./lock.ts";
 import { runsRoot } from "./paths.ts";
-import { confirm, inputText, selectAlias } from "./prompt.ts";
+import { confirm, createSpinner, inputText, selectAlias, selectAliases } from "./prompt.ts";
 import { AccountStore, assertAlias } from "./store.ts";
 import type {
   AccountMeta,
@@ -22,6 +23,19 @@ import type {
   CommandContext,
   AccountsState,
 } from "./types.ts";
+
+const CALL_MESSAGES = [
+  "回 OK",
+  "只答 OK",
+  "OK?",
+  "ping",
+  "hi",
+  "回 1",
+  "测试",
+  "确认",
+  "check",
+  "go",
+];
 
 export async function saveCommand(
   context: CommandContext,
@@ -239,6 +253,85 @@ export async function quotaCommand(context: CommandContext): Promise<void> {
 
     context.stdout.write(`\n${renderList(await store.listSummaries())}\n`);
   });
+}
+
+export async function callCommand(
+  context: CommandContext,
+  options: { select?: boolean; aliases?: string[] } = {},
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const state = await store.loadState();
+    const allAliases = state.accounts.map((account) => account.alias);
+    const targets = options.aliases ?? (
+      options.select === true
+        ? await selectAliases(allAliases, "call")
+        : allAliases
+    );
+    if (targets.length === 0) {
+      throw new Error("没有账号可 call。");
+    }
+
+    const wait = createSpinner(context.stdout);
+    wait.start(`正在 call ${targets.length} 个账号...`);
+    const results = await Promise.all(
+      targets.map(async (target) => callAccount(context, store, target)),
+    ).finally(() => {
+      wait.stop("call 完成。");
+    });
+
+    const successes = results.filter((result) => result.error === null);
+    const failures = results.filter((result) => result.error !== null);
+
+    for (const result of successes) {
+      context.stdout.write(`已 call ${result.alias}: 发送「${result.message}」，回复「${result.reply}」\n`);
+    }
+    if (failures.length > 0) {
+      context.stderr.write(
+        `部分账号 call 失败：\n${failures
+          .map((result) => `${result.alias}: ${result.error}`)
+          .join("\n")}\n`,
+      );
+    }
+    if (successes.length === 0 && failures.length > 0) {
+      throw new Error("所有账号 call 失败。");
+    }
+  });
+}
+
+async function callAccount(
+  context: CommandContext,
+  store: AccountStore,
+  target: string,
+): Promise<{ alias: string; message: string; reply: string | null; error: string | null }> {
+  let runHome: string | null = null;
+  const message = pickCallMessage();
+  try {
+    await store.requireAccount(target);
+    runHome = await prepareAcpHome({
+      appHome: context.appHome,
+      codexHome: context.codexHome,
+      authPath: await store.authPath(target),
+    });
+    const reply = await runCodexCall(
+      context.codexBin,
+      runHome,
+      context.cwd,
+      message,
+    );
+    return { alias: target, message, reply, error: null };
+  } catch (error) {
+    return {
+      alias: target,
+      message,
+      reply: null,
+      error: formatCallFailure(target, error),
+    };
+  } finally {
+    if (runHome !== null) {
+      await cleanupRunHome(runHome);
+    }
+  }
 }
 
 export async function refreshCommand(
@@ -461,6 +554,47 @@ function formatQuotaWarning(alias: string, error: string | null): string {
 
 function isTokenInvalidated(error: string | null): boolean {
   return Boolean(error?.includes("token_invalidated") || error?.includes("401 Unauthorized"));
+}
+
+function pickCallMessage(): string {
+  return CALL_MESSAGES[Math.floor(Math.random() * CALL_MESSAGES.length)]!;
+}
+
+function formatCallFailure(alias: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isTokenInvalidated(message) || isAuthFailure(message)) {
+    return `token 已失效。运行 cxa refresh ${alias} 后重试。`;
+  }
+  if (isQuotaFailure(message)) {
+    return "没有可用额度，等待 quota reset 后重试。";
+  }
+  return firstMeaningfulLine(message);
+}
+
+function isAuthFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("auth required") ||
+    lower.includes("not logged in") ||
+    lower.includes("login required") ||
+    lower.includes("authentication") ||
+    lower.includes("session expired");
+}
+
+function isQuotaFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("usage limit reached") ||
+    lower.includes("usage limit") ||
+    lower.includes("workspace credit limit") ||
+    lower.includes("credit limit") ||
+    lower.includes("out of credits") ||
+    lower.includes("reached your") ||
+    lower.includes("rate limit") ||
+    lower.includes("quota");
+}
+
+function firstMeaningfulLine(message: string): string {
+  return message.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ??
+    "未知错误";
 }
 
 function emailFromAlias(alias: string): string | null {

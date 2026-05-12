@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline/promises';
+import type { Writable } from 'node:stream';
 import { isCancel } from '@clack/core';
-import { cancel, confirm as clackConfirm, select, text } from '@clack/prompts';
+import { cancel, confirm as clackConfirm, multiselect, select, spinner, text } from '@clack/prompts';
 import type { TextOptions } from '@clack/prompts';
 
 export async function confirm(message: string, defaultValue = false): Promise<boolean> {
@@ -50,6 +51,28 @@ export async function selectAlias(aliases: string[], action: string): Promise<st
     })
   });
   return unwrapPrompt(value);
+}
+
+export async function selectAliases(aliases: string[], action: string): Promise<string[]> {
+  if (aliases.length === 0) {
+    throw new Error('没有可选择的账号。');
+  }
+
+  const value = await multiselect({
+    message: `请选择要${action}的账号`,
+    options: aliases.map((alias) => {
+      return {
+        value: alias,
+        label: alias
+      };
+    }),
+    required: true
+  });
+  return unwrapPrompt(value);
+}
+
+export function createSpinner(output?: Writable) {
+  return output === undefined ? spinner() : spinner({ output });
 }
 
 function unwrapPrompt<T>(value: T | symbol): T {

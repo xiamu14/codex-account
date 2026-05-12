@@ -35,12 +35,14 @@ cxa list
 cxa active [alias]
 cxa deactive
 cxa delete [alias]
+cxa call
+cxa call --select
 cxa quota
 cxa refresh [alias]
 cxa subscription
 ```
 
-`active`、`delete` 和 `refresh` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。
+`active`、`delete` 和 `refresh` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。`call` 默认对所有本地账号并发执行；`call --select` 进入多选列表，由用户选择一个或多个账号。
 
 不提供 `cxa current`。当前账号信息由 Codex CLI 或 Codex Desktop 自身显示。
 
@@ -203,6 +205,19 @@ cxa quota
 这里应异步执行，但要避免多个账号共用同一个可写 `~/.codex`。每个账号必须有自己的隔离运行目录，不能在真实 `~/.codex` 上同步来回切换，否则会和当前 Codex CLI / Desktop 状态互相影响。
 
 可以并发刷新多个账号，但需要控制并发数，例如 2 或 3，避免触发过多请求。
+
+## call 流程
+
+`cxa call` 负责给账号发一条极短消息，用于触发 quota reset 相关状态刷新：
+
+1. 默认对所有本地账号并发执行。
+2. 如果传 `--select`，展示多选账号列表，只执行用户选择的账号。
+3. 每个账号使用隔离临时 `CODEX_HOME`，复制该账号保存的 `auth.json`。
+4. 使用预设 10 条极短消息随机选择一条，执行一次 `codex exec`。
+5. 成功时输出 `已 call <alias>`。
+6. 单个账号无额度时，只报告这个账号没有可用额度，不影响其他账号。
+7. 单个账号 token 过期时，只提示运行 `cxa refresh <alias>`，不 deactive，不修改当前 Codex 登录态，不影响其他账号。
+8. 执行结束后清理临时目录。
 
 ## refresh 流程
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { copyFileAtomic, pathExists, removePath } from "./fs.ts";
@@ -37,6 +37,90 @@ export async function runCodexLogin(
 ): Promise<void> {
   await mkdir(accountHome, { recursive: true });
   await runBrowserLoginWithoutOpeningBrowser(codexBin, accountHome, cwd);
+}
+
+export async function runCodexCall(
+  codexBin: string,
+  codexHome: string,
+  cwd: string,
+  prompt: string,
+): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const outputPath = path.join(codexHome, `call-output-${randomUUID()}.txt`);
+    const child = spawn(
+      codexBin,
+      [
+        "exec",
+        "--ephemeral",
+        "--ignore-rules",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--color",
+        "never",
+        "--output-last-message",
+        outputPath,
+        prompt,
+      ],
+      {
+        cwd,
+        env: {
+          ...process.env,
+          CODEX_HOME: codexHome,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error("codex exec 等待响应超时。"));
+    }, 60_000);
+
+    child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => errors.push(chunk));
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("exit", async (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve(
+          formatCallOutput(
+            await readFile(outputPath, "utf8").catch(() =>
+              Buffer.concat(chunks).toString("utf8"),
+            ),
+          ),
+        );
+        return;
+      }
+      const output = Buffer.concat([...chunks, ...errors]).toString("utf8");
+      reject(
+        new Error(
+          output.trim() ||
+            `codex exec 失败，退出码 ${code ?? "unknown"}。`,
+        ),
+      );
+    });
+  });
+}
+
+function formatCallOutput(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines.at(-1) ?? "无回复";
 }
 
 async function runCodex(

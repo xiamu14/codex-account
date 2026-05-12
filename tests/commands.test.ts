@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import {
+  callCommand,
   deactiveCommand,
   deleteCommand,
   findSavedAccount,
@@ -309,6 +310,92 @@ describe("quotaCommand", () => {
   });
 });
 
+describe("callCommand", () => {
+  test("calls all stored accounts concurrently", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const firstAuth = path.join(context.appHome, "first-auth.json");
+    const secondAuth = path.join(context.appHome, "second-auth.json");
+    await writeFile(firstAuth, '{"token":"one"}', "utf8");
+    await writeFile(secondAuth, '{"token":"two"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("one@example.com", firstAuth, {
+      email: "one@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("two@example.com", secondAuth, {
+      email: "two@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await callCommand(context);
+
+    expect(output.text).toContain("已 call one@example.com: 发送「");
+    expect(output.text).toContain("已 call two@example.com: 发送「");
+    expect(output.text).toContain("回复「OK」");
+  });
+
+  test("keeps calling other accounts when one token expired", async () => {
+    const output = new CaptureStream();
+    const errorOutput = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.stderr = errorOutput as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const goodAuth = path.join(context.appHome, "good-auth.json");
+    const expiredAuth = path.join(context.appHome, "expired-auth.json");
+    await writeFile(goodAuth, '{"token":"good"}', "utf8");
+    await writeFile(expiredAuth, '{"token":"expired"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("good@example.com", goodAuth, {
+      email: "good@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("expired@example.com", expiredAuth, {
+      email: "expired@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await callCommand(context);
+
+    expect(output.text).toContain("已 call good@example.com: 发送「");
+    expect(output.text).toContain("回复「OK」");
+    expect(errorOutput.text).toContain("expired@example.com: token 已失效");
+    expect(errorOutput.text).toContain("cxa refresh expired@example.com");
+  });
+
+  test("reports quota failures for selected accounts", async () => {
+    const output = new CaptureStream();
+    const errorOutput = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.stderr = errorOutput as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, "quota-auth.json");
+    await writeFile(authPath, '{"token":"quota"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("quota@example.com", authPath, {
+      email: "quota@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await expect(
+      callCommand(context, { aliases: ["quota@example.com"] }),
+    ).rejects.toThrow(
+      "所有账号 call 失败",
+    );
+
+    expect(errorOutput.text).toContain("quota@example.com: 没有可用额度");
+  });
+});
+
 describe("refreshCommand", () => {
   test("logs in with an isolated Codex home and refreshes the requested account", async () => {
     const output = new CaptureStream();
@@ -584,6 +671,32 @@ async function writeRefreshFakeCodex(
       `    send({ jsonrpc: '2.0', id: message.id, result: { account: { email: ${JSON.stringify(email)}, planType: 'plus' } } });`,
       "  }",
       "});",
+    ].join("\n"),
+    "utf8",
+  );
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}
+
+async function writeCallFakeCodex(root: string): Promise<string> {
+  const scriptPath = path.join(root, "fake-call-codex.mjs");
+  await writeFile(
+    scriptPath,
+    [
+      "#!/usr/bin/env node",
+      'import { readFileSync } from "node:fs";',
+      'import path from "node:path";',
+      "if (process.argv[2] !== 'exec') { process.exit(0); }",
+      "const auth = readFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), 'utf8');",
+      "if (auth.includes('expired')) {",
+      "  process.stderr.write('401 Unauthorized token_invalidated\\n');",
+      "  process.exit(1);",
+      "}",
+      "if (auth.includes('quota')) {",
+      "  process.stderr.write('Usage limit reached\\n');",
+      "  process.exit(1);",
+      "}",
+      "process.stdout.write('OK\\n');",
     ].join("\n"),
     "utf8",
   );
