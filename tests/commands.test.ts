@@ -532,7 +532,7 @@ describe("auto quota commands", () => {
     expect(await store.readQuota("user@example.com")).not.toBeNull();
   });
 
-  test("tick calls due accounts only when 5h quota is below 90 percent", async () => {
+  test("tick calls every due account regardless of remaining 5h quota", async () => {
     const context = await makeContext();
     context.codexBin = await writeCallFakeCodex(context.appHome);
     const lowAuth = path.join(context.appHome, "low-auth.json");
@@ -558,9 +558,9 @@ describe("auto quota commands", () => {
     await autoQuotaTickCommand(context);
 
     const autoState = await readAutoQuotaState(context.appHome);
-    expect(autoState.lastSuccessAliases).toEqual(["low@example.com"]);
+    expect(autoState.lastSuccessAliases).toEqual(["low@example.com", "high@example.com"]);
     expect(autoState.handledFiveHourResets["low@example.com"]).toBe(reset);
-    expect(autoState.handledFiveHourResets["high@example.com"]).toBeUndefined();
+    expect(autoState.handledFiveHourResets["high@example.com"]).toBe(reset);
   });
 
   test("status explains successful and failed accounts clearly", async () => {
@@ -612,7 +612,7 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("已连续失败 3 次");
     expect(output.text).toContain("先暂时放到一边");
     expect(output.text).toMatch(/work@example\.com\s{2,}今天/);
-    expect(output.text).toContain("longer-work@example.com  额度还充足");
+    expect(output.text).toMatch(/longer-work@example\.com\s{2,}今天/);
   });
 });
 

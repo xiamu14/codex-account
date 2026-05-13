@@ -74,6 +74,8 @@ function renderPlist(options: {
     <string>${escapeXml(options.codexHome)}</string>
     <key>CXA_CODEX_BIN</key>
     <string>${escapeXml(options.codexBin)}</string>
+    <key>PATH</key>
+    <string>${escapeXml(renderLaunchdPath(options))}</string>
   </dict>
   <key>StartInterval</key>
   <integer>${AUTO_QUOTA_INTERVAL_MINUTES * 60}</integer>
@@ -84,6 +86,26 @@ function renderPlist(options: {
 `;
 }
 
+function renderLaunchdPath(options: {
+  bunBin: string;
+  codexBin: string;
+}): string {
+  const entries = [
+    path.dirname(options.bunBin),
+    path.dirname(options.codexBin),
+    process.env.PATH ?? "",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ].flatMap((entry) => entry.split(":"));
+  return [...new Set(entries.filter((entry) => entry.trim().length > 0))].join(":");
+}
+
 function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -92,4 +114,3 @@ function escapeXml(value: string): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
 }
-

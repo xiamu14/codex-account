@@ -539,15 +539,6 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
         recoveredAliases.push(alias);
         continue;
       }
-      const percentLeft = quota.fiveHour?.percentLeft ?? null;
-      if (percentLeft === null) {
-        failures[alias] = "暂时无法确认 5h quota 剩余额度，后台会继续重试。";
-        continue;
-      }
-      if (percentLeft >= 90) {
-        recoveredAliases.push(alias);
-        continue;
-      }
       if (handledFiveHourResets[alias] === resetValue) {
         continue;
       }
@@ -591,8 +582,7 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
 function needsAutoQuotaFetch(quota: AccountQuota | null): boolean {
   return quota === null ||
     quota.fiveHour === null ||
-    quota.fiveHour.resetsAt === null ||
-    quota.fiveHour.percentLeft === null;
+    quota.fiveHour.resetsAt === null;
 }
 
 function mergeFailureCounts(
@@ -875,9 +865,8 @@ function renderAutoQuotaStatus(
     .map((summary) => ({
       alias: summary.alias,
       reset: parseDate(summary.quota?.fiveHour?.resetsAt ?? null),
-      percentLeft: summary.quota?.fiveHour?.percentLeft ?? null,
     }))
-    .filter((item): item is { alias: string; reset: Date; percentLeft: number | null } => item.reset !== null)
+    .filter((item): item is { alias: string; reset: Date } => item.reset !== null)
     .sort((left, right) => left.reset.getTime() - right.reset.getTime());
 
   if (nextItems.length > 0) {
@@ -885,12 +874,8 @@ function renderAutoQuotaStatus(
     lines.push(chalk.bold("下次预计："));
     const width = maxTextWidth(nextItems.map((item) => item.alias));
     for (const item of nextItems) {
-      const isEnough = item.percentLeft !== null && item.percentLeft >= 90;
-      const suffix = isEnough
-        ? "额度还充足，低于 90% 后会自动刷新"
-        : `${formatFriendlyTime(item.reset.toISOString())} 后会自动刷新`;
-      const coloredSuffix = isEnough ? chalk.green(suffix) : chalk.cyan(suffix);
-      lines.push(`  ${padText(item.alias, width)}  ${coloredSuffix}`);
+      const suffix = `${formatFriendlyTime(item.reset.toISOString())} 后会自动刷新`;
+      lines.push(`  ${padText(item.alias, width)}  ${chalk.cyan(suffix)}`);
     }
   }
 
