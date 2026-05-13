@@ -499,13 +499,13 @@ describe("auto quota commands", () => {
     expect((await readAutoQuotaState(context.appHome)).enabled).toBe(true);
     expect((await readAutoQuotaState(context.appHome)).lastQuotaFetchAliases).toEqual(["user@example.com"]);
     expect((await store.readQuota("user@example.com"))?.fiveHour?.percentLeft).toBe(74);
-    expect(output.text).toContain("已开启 5h quota 自动刷新");
-    expect(output.text).toContain("已先刷新当前额度");
+    expect(output.text).toContain("自动刷新已开启");
+    expect(output.text).toContain("已刷新当前额度");
     expect(output.text).toContain("user@example.com");
 
     await autoQuotaStopCommand(context, { uninstallLaunchAgent: false });
     expect((await readAutoQuotaState(context.appHome)).enabled).toBe(false);
-    expect(output.text).toContain("已停止 5h quota 自动刷新");
+    expect(output.text).toContain("自动刷新已停止");
   });
 
   test("tick fetches missing quota and waits when the account is not due", async () => {
@@ -606,11 +606,11 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("后台任务：");
     expect(output.text).toContain("已刷新：");
     expect(output.text).toContain("work@example.com");
-    expect(output.text).toContain("有 1 个账号暂时无法自动刷新");
+    expect(output.text).toContain("失败账号：1 个");
     expect(output.text).toContain("old@example.com");
     expect(output.text).toContain("token 已失效");
-    expect(output.text).toContain("已连续失败 3 次");
-    expect(output.text).toContain("先暂时放到一边");
+    expect(output.text).toContain("连续失败 3 次");
+    expect(output.text).toContain("已暂停");
     expect(output.text).toMatch(/work@example\.com\s{2,}今天/);
     expect(output.text).toMatch(/longer-work@example\.com\s{2,}今天/);
   });

@@ -431,16 +431,16 @@ export async function autoQuotaStartCommand(
       });
     }
 
-    context.stdout.write("已开启 5h quota 自动刷新。后台会每 30 分钟检查一次。\n");
+    context.stdout.write("自动刷新已开启。每 30 分钟检查一次。\n");
     if (startResult.successes.length > 0) {
-      context.stdout.write("已先刷新当前额度：\n");
+      context.stdout.write("已刷新当前额度：\n");
       for (const alias of startResult.successes) {
         context.stdout.write(`  ${alias}\n`);
       }
     }
     const failures = Object.entries(startResult.failures);
     if (failures.length > 0) {
-      context.stdout.write("有些账号暂时无法读取额度，后台会继续重试：\n");
+      context.stdout.write("以下账号暂时失败：\n");
       for (const [alias, reason] of failures) {
         context.stdout.write(`  ${alias}：${reason}\n`);
       }
@@ -482,7 +482,7 @@ export async function autoQuotaStopCommand(
       await uninstallAutoQuotaLaunchAgent();
     }
 
-    context.stdout.write("已停止 5h quota 自动刷新。\n");
+    context.stdout.write("自动刷新已停止。\n");
   });
 }
 
@@ -524,14 +524,14 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
         recoveredAliases.push(alias);
       }
       if (quota === null) {
-        failures[alias] = "暂时无法读取额度，后台会继续重试。";
+        failures[alias] = "读取额度失败。";
         continue;
       }
 
       const reset = quota.fiveHour?.resetsAt ?? null;
       const resetTime = reset === null ? null : new Date(reset);
       if (reset === null || resetTime === null || Number.isNaN(resetTime.getTime())) {
-        failures[alias] = "暂时无法确认 5h quota 的重置时间，后台会继续重试。";
+        failures[alias] = "缺少 5h 重置时间。";
         continue;
       }
       const resetValue = reset;
@@ -557,7 +557,7 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       handledFiveHourResets[alias] = resetValue;
       const refreshed = await refreshQuotaQuietly(context, store, alias);
       if (refreshed.quota === null) {
-        failures[alias] = "已发送刷新请求，但暂时无法读取新的额度，后台会继续重试。";
+        failures[alias] = "已发送刷新请求，但读取新额度失败。";
       }
     }
 
@@ -812,8 +812,8 @@ function renderAutoQuotaStatus(
     return [
       `${chalk.bold("自动刷新：")}${chalk.yellow("未开启")}`,
       "",
-      "不会自动刷新 5h quota。",
-      "如需开启，请运行：",
+      "当前不会自动刷新 5h quota。",
+      "开启命令：",
       `  ${chalk.cyan("bun cli quota --start")}`,
     ].join("\n");
   }
@@ -835,7 +835,7 @@ function renderAutoQuotaStatus(
       }
     }
   } else {
-    lines.push(`${chalk.bold("上次自动刷新：")}${chalk.dim("还没有自动刷新过账号")}`);
+    lines.push(`${chalk.bold("上次自动刷新：")}${chalk.dim("暂无")}`);
   }
 
   if (state.lastQuotaFetchAliases.length > 0) {
@@ -848,17 +848,17 @@ function renderAutoQuotaStatus(
   const failures = Object.entries(state.lastFailureByAlias);
   if (failures.length > 0) {
     lines.push("");
-    lines.push(chalk.yellow(`有 ${failures.length} 个账号暂时无法自动刷新：`));
+    lines.push(chalk.yellow(`失败账号：${failures.length} 个`));
     const width = maxTextWidth(failures.map(([alias]) => alias));
     for (const [alias, reason] of failures) {
       const count = state.consecutiveFailureCountByAlias[alias] ?? 1;
       const detail = count >= 3
-        ? `${reason} 已连续失败 ${count} 次，先暂时放到一边；修复后下次检查会自动恢复。`
-        : `${reason} 后台还会继续重试，已连续失败 ${count} 次。`;
+        ? `${reason} 连续失败 ${count} 次，已暂停。修复后会自动恢复。`
+        : `${reason} 连续失败 ${count} 次，下次再试。`;
       lines.push(`  ${chalk.yellow(padText(alias, width))}  ${chalk.dim(detail)}`);
     }
     lines.push("");
-    lines.push(chalk.dim("其他账号会继续自动检查。"));
+    lines.push(chalk.dim("其他账号不受影响。"));
   }
 
   const nextItems = summaries
@@ -874,18 +874,18 @@ function renderAutoQuotaStatus(
     lines.push(chalk.bold("下次预计："));
     const width = maxTextWidth(nextItems.map((item) => item.alias));
     for (const item of nextItems) {
-      const suffix = `${formatFriendlyTime(item.reset.toISOString())} 后会自动刷新`;
+      const suffix = `${formatFriendlyTime(item.reset.toISOString())} 后刷新`;
       lines.push(`  ${padText(item.alias, width)}  ${chalk.cyan(suffix)}`);
     }
   }
 
   if (!launchAgentInstalled) {
     lines.push("");
-    lines.push(chalk.red("自动刷新目前不会运行。请重新运行："));
+    lines.push(chalk.red("后台任务未安装。请重新开启："));
     lines.push(`  ${chalk.cyan("bun cli quota --start")}`);
   } else if (failures.length === 0) {
     lines.push("");
-    lines.push(chalk.green("无需操作。后台会继续自动检查。"));
+    lines.push(chalk.green("状态正常。"));
   }
 
   return lines.join("\n");
@@ -895,7 +895,7 @@ function formatAutoQuotaFailure(alias: string, error: string | null): string {
   if (isTokenInvalidated(error)) {
     return `token 已失效，请运行 bun cli refresh ${alias}`;
   }
-  return "暂时无法读取额度，后台会继续重试。";
+  return "读取额度失败。";
 }
 
 function parseDate(value: string | null): Date | null {
