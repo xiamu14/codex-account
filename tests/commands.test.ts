@@ -49,7 +49,24 @@ describe("updateSubscriptionDateCommand", () => {
     expect(meta?.subscriptionExpiresAt).toContain("2026-06-01");
   });
 
-  test("rejects invalid date format", async () => {
+  test("accepts natural language dates", async () => {
+    const context = await makeContext();
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await updateSubscriptionDateCommand(context, "May 17, 2026", "user@example.com");
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.subscriptionExpiresAt).toContain("2026-05-17");
+  });
+
+  test("rejects invalid dates", async () => {
     const context = await makeContext();
     const authPath = path.join(context.appHome, "auth.json");
     await writeFile(authPath, '{"token":"one"}', "utf8");
@@ -61,8 +78,8 @@ describe("updateSubscriptionDateCommand", () => {
     });
 
     await expect(
-      updateSubscriptionDateCommand(context, "2026/06/01", "user@example.com"),
-    ).rejects.toThrow("YYYY-MM-DD");
+      updateSubscriptionDateCommand(context, "not a date", "user@example.com"),
+    ).rejects.toThrow("订阅日期无效");
   });
 
   test("falls back to the only stored account when alias is omitted", async () => {
@@ -308,6 +325,33 @@ describe("quotaCommand", () => {
       "token 失效的 active 账号已自动 deactive：user@example.com",
     );
   });
+
+  test("refreshes only selected accounts", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("selected@example.com", authPath, {
+      email: "selected@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("skipped@example.com", authPath, {
+      email: "skipped@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context, { aliases: ["selected@example.com"] });
+
+    expect(await store.readQuota("selected@example.com")).not.toBeNull();
+    expect(await store.readQuota("skipped@example.com")).toBeNull();
+    expect(output.text).toContain("selected@example.com");
+    expect(output.text).not.toContain("skipped@example.com");
+  });
 });
 
 describe("callCommand", () => {
@@ -334,9 +378,13 @@ describe("callCommand", () => {
 
     await callCommand(context);
 
-    expect(output.text).toContain("已 call one@example.com: 发送「");
-    expect(output.text).toContain("已 call two@example.com: 发送「");
-    expect(output.text).toContain("回复「OK」");
+    expect(output.text).toContain("one@example.com\n你：");
+    expect(output.text).toContain("two@example.com\n你：");
+    expect(output.text).toContain("等待回复");
+    expect(output.text).toContain("收到回复");
+    expect(output.text).toContain("one@example.com\n回复：收到");
+    expect(output.text).toContain("two@example.com\n回复：收到");
+    expect(output.text).not.toContain("已 call");
   });
 
   test("keeps calling other accounts when one token expired", async () => {
@@ -364,8 +412,9 @@ describe("callCommand", () => {
 
     await callCommand(context);
 
-    expect(output.text).toContain("已 call good@example.com: 发送「");
-    expect(output.text).toContain("回复「OK」");
+    expect(output.text).toContain("good@example.com\n你：");
+    expect(output.text).toContain("expired@example.com\n你：");
+    expect(output.text).toContain("good@example.com\n回复：收到");
     expect(errorOutput.text).toContain("expired@example.com: token 已失效");
     expect(errorOutput.text).toContain("cxa refresh expired@example.com");
   });
@@ -687,6 +736,12 @@ async function writeCallFakeCodex(root: string): Promise<string> {
       'import { readFileSync } from "node:fs";',
       'import path from "node:path";',
       "if (process.argv[2] !== 'exec') { process.exit(0); }",
+      "const prompt = process.argv.at(-1);",
+      "const allowedPrompts = new Set(['水杯', '书桌', '窗户', '铅笔', '纸张', '地图', '钟表', '椅子', '咖啡', '天气']);",
+      "if (!allowedPrompts.has(prompt)) {",
+      "  process.stderr.write(`unexpected prompt: ${prompt}\\n`);",
+      "  process.exit(1);",
+      "}",
       "const auth = readFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), 'utf8');",
       "if (auth.includes('expired')) {",
       "  process.stderr.write('401 Unauthorized token_invalidated\\n');",
@@ -696,7 +751,7 @@ async function writeCallFakeCodex(root: string): Promise<string> {
       "  process.stderr.write('Usage limit reached\\n');",
       "  process.exit(1);",
       "}",
-      "process.stdout.write('OK\\n');",
+      "process.stdout.write('收到\\n');",
     ].join("\n"),
     "utf8",
   );

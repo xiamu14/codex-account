@@ -38,11 +38,12 @@ cxa delete [alias]
 cxa call
 cxa call --select
 cxa quota
+cxa quota --select
 cxa refresh [alias]
 cxa subscription
 ```
 
-`active`、`delete` 和 `refresh` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。`call` 默认对所有本地账号并发执行；`call --select` 进入多选列表，由用户选择一个或多个账号。
+`active`、`delete` 和 `refresh` 都支持不传账号名。不传时进入选择列表，由用户选择目标账号。`call` 和 `quota` 默认对所有本地账号执行；`--select` 进入多选列表，由用户选择一个或多个账号。
 
 不提供 `cxa current`。当前账号信息由 Codex CLI 或 Codex Desktop 自身显示。
 
@@ -187,7 +188,7 @@ cxa quota
 
 ## quota 流程
 
-`cxa quota` 负责刷新所有账号的账号信息和额度信息。
+`cxa quota` 负责刷新所有账号的账号信息和额度信息。`cxa quota --select` 进入多选列表，只刷新选中的一个或多个账号。
 
 每个账号都使用隔离目录执行 ACP：
 

@@ -17,20 +17,27 @@ import { resolveAppHome, resolveCodexHome } from "./paths.ts";
 import type { CommandContext } from "./types.ts";
 
 function usage(): string {
+  const rows: Array<[command: string, description: string]> = [
+    ["bun cli --help", "查看帮助"],
+    ["cxa save", "保存当前已登录账号"],
+    ["cxa login", "登录新账号并保存到本地"],
+    ["cxa list", "查看本地账号和缓存信息"],
+    ["cxa active", "激活账号"],
+    ["cxa deactive", "退出 Codex 账号"],
+    ["cxa delete", "删除本地保存的账号"],
+    ["cxa call", "给所有账号发一条极短消息，激活 quota reset"],
+    ["cxa call --select", "选择账号并发送极短消息"],
+    ["cxa quota", "刷新所有账号的账号信息和额度缓存"],
+    ["cxa quota --select", "选择账号并刷新额度缓存"],
+    ["cxa refresh", "刷新账号 token"],
+    ["cxa subscription", "选择账号并输入订阅到期日"],
+  ];
+  const commandWidth = Math.max(...rows.map(([command]) => command.length));
   return [
     "用法:",
-    "  bun cli --help    查看帮助",
-    "  cxa save          保存当前已登录账号",
-    "  cxa login         登录新账号并保存到本地",
-    "  cxa list          查看本地账号和缓存信息",
-    "  cxa active        激活账号",
-    "  cxa deactive      退出 Codex 账号",
-    "  cxa delete        删除本地保存的账号",
-    "  cxa call          给所有账号发一条极短消息，激活 quota reset",
-    "  cxa call --select 选择账号并发送极短消息",
-    "  cxa quota         刷新所有账号的账号信息和额度缓存",
-    "  cxa refresh       刷新账号 token",
-    "  cxa subscription  选择账号并输入订阅到期日",
+    ...rows.map(([command, description]) => {
+      return `  ${command.padEnd(commandWidth)}  ${description}`;
+    }),
   ].join("\n");
 }
 
@@ -90,7 +97,12 @@ async function run(argv: string[]): Promise<number> {
       await callCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "quota":
-      await quotaCommand(context);
+      if (argv[1] !== undefined && argv[1] !== "--select") {
+        throw new Error("quota 不接收账号别名。请使用 cxa quota 或 cxa quota --select。");
+      }
+      if (argv[2] !== undefined)
+        throw new Error("quota 只支持 --select 参数。");
+      await quotaCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "refresh":
       if (argv[2] !== undefined)

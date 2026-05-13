@@ -1,5 +1,6 @@
 import path from "node:path";
 import { mkdir, mkdtemp } from "node:fs/promises";
+import dayjs from "dayjs";
 import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
 import {
   activateAuth,
@@ -25,16 +26,16 @@ import type {
 } from "./types.ts";
 
 const CALL_MESSAGES = [
-  "回 OK",
-  "只答 OK",
-  "OK?",
-  "ping",
-  "hi",
-  "回 1",
-  "测试",
-  "确认",
-  "check",
-  "go",
+  "水杯",
+  "书桌",
+  "窗户",
+  "铅笔",
+  "纸张",
+  "地图",
+  "钟表",
+  "椅子",
+  "咖啡",
+  "天气",
 ];
 
 export async function saveCommand(
@@ -190,19 +191,27 @@ export async function activeCommand(
   });
 }
 
-export async function quotaCommand(context: CommandContext): Promise<void> {
+export async function quotaCommand(
+  context: CommandContext,
+  options: { select?: boolean; aliases?: string[] } = {},
+): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
-    if (state.accounts.length === 0) {
+    const allAliases = state.accounts.map((account) => account.alias);
+    const targets = options.aliases ?? (
+      options.select === true
+        ? await selectAliases(allAliases, "刷新额度")
+        : allAliases
+    );
+    if (targets.length === 0) {
       throw new Error("没有账号可刷新。");
     }
 
     const failures: string[] = [];
     const warnings: string[] = [];
     const deactivatedAliases: string[] = [];
-    for (const account of state.accounts) {
-      const alias = account.alias;
+    for (const alias of targets) {
       let runHome: string | null = null;
       try {
         runHome = await prepareAcpHome({
@@ -251,7 +260,9 @@ export async function quotaCommand(context: CommandContext): Promise<void> {
       context.stderr.write(`token 失效的 active 账号已自动 deactive：${deactivatedAliases.join(", ")}\n`);
     }
 
-    context.stdout.write(`\n${renderList(await store.listSummaries())}\n`);
+    const summaries = await store.listSummaries();
+    const selected = summaries.filter((summary) => targets.includes(summary.alias));
+    context.stdout.write(`\n${renderList(selected)}\n`);
   });
 }
 
@@ -272,19 +283,27 @@ export async function callCommand(
       throw new Error("没有账号可 call。");
     }
 
+    const calls = targets.map((target) => ({
+      alias: target,
+      message: pickCallMessage(),
+    }));
+    for (const call of calls) {
+      context.stdout.write(`${call.alias}\n你：${call.message}\n`);
+    }
+
     const wait = createSpinner(context.stdout);
-    wait.start(`正在 call ${targets.length} 个账号...`);
+    wait.start("等待回复...");
     const results = await Promise.all(
-      targets.map(async (target) => callAccount(context, store, target)),
+      calls.map(async (call) => callAccount(context, store, call)),
     ).finally(() => {
-      wait.stop("call 完成。");
+      wait.stop("收到回复。");
     });
 
     const successes = results.filter((result) => result.error === null);
     const failures = results.filter((result) => result.error !== null);
 
     for (const result of successes) {
-      context.stdout.write(`已 call ${result.alias}: 发送「${result.message}」，回复「${result.reply}」\n`);
+      context.stdout.write(`${result.alias}\n回复：${result.reply}\n`);
     }
     if (failures.length > 0) {
       context.stderr.write(
@@ -302,30 +321,29 @@ export async function callCommand(
 async function callAccount(
   context: CommandContext,
   store: AccountStore,
-  target: string,
+  call: { alias: string; message: string },
 ): Promise<{ alias: string; message: string; reply: string | null; error: string | null }> {
   let runHome: string | null = null;
-  const message = pickCallMessage();
   try {
-    await store.requireAccount(target);
+    await store.requireAccount(call.alias);
     runHome = await prepareAcpHome({
       appHome: context.appHome,
       codexHome: context.codexHome,
-      authPath: await store.authPath(target),
+      authPath: await store.authPath(call.alias),
     });
     const reply = await runCodexCall(
       context.codexBin,
       runHome,
       context.cwd,
-      message,
+      call.message,
     );
-    return { alias: target, message, reply, error: null };
+    return { alias: call.alias, message: call.message, reply, error: null };
   } catch (error) {
     return {
-      alias: target,
-      message,
+      alias: call.alias,
+      message: call.message,
       reply: null,
-      error: formatCallFailure(target, error),
+      error: formatCallFailure(call.alias, error),
     };
   } finally {
     if (runHome !== null) {
@@ -391,7 +409,7 @@ export async function subscriptionCommand(context: CommandContext): Promise<void
     );
     const dateText = await inputText(
       "请输入订阅到期日期",
-      "YYYY-MM-DD",
+      "May 17, 2026",
       validateSubscriptionDate,
     );
     await updateSubscriptionDate(store, target, dateText);
@@ -495,26 +513,11 @@ function mergeMeta(
 }
 
 function parseSubscriptionDate(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(
-      "订阅日期格式应为 YYYY-MM-DD，例如 2026-06-01。",
-    );
-  }
-  const date = new Date(`${value}T23:59:59`);
-  if (Number.isNaN(date.getTime())) {
+  const date = dayjs(value.trim());
+  if (!date.isValid()) {
     throw new Error("订阅日期无效。");
   }
-  const [year, month, day] = value
-    .split("-")
-    .map((part) => Number.parseInt(part, 10));
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() + 1 !== month ||
-    date.getDate() !== day
-  ) {
-    throw new Error("订阅日期无效。");
-  }
-  return date.toISOString();
+  return date.endOf("day").toDate().toISOString();
 }
 
 function validateSubscriptionDate(value: string | undefined): string | undefined {
