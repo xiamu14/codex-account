@@ -24,10 +24,10 @@ async function acquireLock(target: string): Promise<void> {
         await mkdir(target, { recursive: false });
         return;
       } catch {
-        throw new Error('另一个 cxa 操作正在运行，请稍后重试。');
+        throw new Error('另一个 cxa 操作正在运行，请稍后再试。');
       }
     }
-    throw new Error('另一个 cxa 操作正在运行，请稍后重试。');
+    throw new Error('另一个 cxa 操作正在运行，请稍后再试。');
   }
 }
 

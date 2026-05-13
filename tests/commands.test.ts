@@ -111,7 +111,7 @@ describe("saveCommand", () => {
     const context = await makeContext();
 
     await expect(saveCommand(context, "user@example.com")).rejects.toThrow(
-      "当前 Codex 没有登录",
+      "当前未登录",
     );
   });
 
@@ -132,7 +132,7 @@ describe("saveCommand", () => {
     expect(summaries[0]?.isActive).toBe(true);
     expect(summaries[0]?.meta?.email).toBe("fresh@example.com");
     expect(await readFile(await store.authPath("work"), "utf8")).toBe('{"token":"live"}');
-    expect(output.text).toContain("已保存并激活账号 work");
+    expect(output.text).toContain("已保存并激活 work");
   });
 
   test("only reports when the current login is already saved", async () => {
@@ -174,7 +174,7 @@ describe("loginCommand", () => {
     expect(summaries[0]?.isActive).toBe(false);
     expect(await readFile(await store.authPath("new-account"), "utf8")).toBe('{"token":"fresh"}');
     await expect(readFile(path.join(context.codexHome, "auth.json"), "utf8")).rejects.toThrow();
-    expect(output.text).toContain("登录完成，已保存账号 new-account");
+    expect(output.text).toContain("已保存 new-account");
   });
 });
 
@@ -200,7 +200,7 @@ describe("deactiveCommand", () => {
     await expect(readFile(path.join(context.codexHome, "auth.json"), "utf8")).rejects.toThrow();
     expect((await store.listSummaries())[0]?.isActive).toBe(false);
     expect(await readFile(await store.authPath("user@example.com"), "utf8")).toBe('{"token":"saved"}');
-    expect(output.text).toContain("已退出当前 Codex 账号");
+    expect(output.text).toContain("已退出当前账号");
   });
 });
 
@@ -224,7 +224,7 @@ describe("deleteCommand", () => {
 
     expect(await store.listSummaries()).toHaveLength(0);
     expect(await readFile(path.join(context.codexHome, "auth.json"), "utf8")).toBe('{"token":"live"}');
-    expect(output.text).toContain("已删除账号 user@example.com");
+    expect(output.text).toContain("已删除 user@example.com");
   });
 });
 
@@ -276,9 +276,9 @@ describe("quotaCommand", () => {
     const quota = await store.readQuota("user@example.com");
     expect(meta?.email).toBe("fresh@example.com");
     expect(quota).toBeNull();
-    expect(output.text).toContain("已刷新 user@example.com，额度读取失败，已保留旧额度");
-    expect(errorOutput.text).toContain("部分账号额度读取失败");
-    expect(errorOutput.text).toContain("ACP 读取额度信息失败");
+    expect(output.text).toContain("已更新 user@example.com，额度未刷新");
+    expect(errorOutput.text).toContain("部分额度未刷新");
+    expect(errorOutput.text).toContain("读取额度失败");
   });
 
   test("prints a short refresh hint when quota fails because token was invalidated", async () => {
@@ -302,7 +302,7 @@ describe("quotaCommand", () => {
     await quotaCommand(context);
 
     expect(errorOutput.text).toContain(
-      "user@example.com: token 已失效。运行 cxa refresh user@example.com 后重新登录。",
+      "user@example.com: token 已失效。运行 cxa refresh user@example.com。",
     );
   });
 
@@ -328,7 +328,7 @@ describe("quotaCommand", () => {
     const summaries = await store.listSummaries();
     expect(summaries[0]?.isActive).toBe(false);
     expect(errorOutput.text).toContain(
-      "token 失效的 active 账号已自动 deactive：user@example.com",
+      "已退出 token 失效的账号：user@example.com",
     );
   });
 
@@ -444,7 +444,7 @@ describe("callCommand", () => {
     await expect(
       callCommand(context, { aliases: ["quota@example.com"] }),
     ).rejects.toThrow(
-      "所有账号 call 失败",
+      "所有账号都失败",
     );
 
     expect(errorOutput.text).toContain("quota@example.com: 没有可用额度");

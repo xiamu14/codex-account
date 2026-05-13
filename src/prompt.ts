@@ -15,7 +15,7 @@ export async function confirm(message: string, defaultValue = false): Promise<bo
 export async function waitForEnter(message: string): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    await rl.question(`${message}\n按 Enter 继续...`);
+    await rl.question(`${message}\n按 Enter 继续`);
   } finally {
     rl.close();
   }
@@ -35,14 +35,14 @@ export async function inputText(
 
 export async function selectAlias(aliases: string[], action: string): Promise<string> {
   if (aliases.length === 0) {
-    throw new Error('没有可选择的账号。');
+    throw new Error('没有账号可选。');
   }
   if (aliases.length === 1) {
     return aliases[0]!;
   }
 
   const value = await select({
-    message: `请选择要${action}的账号`,
+    message: `选择要${action}的账号`,
     options: aliases.map((alias) => {
       return {
         value: alias,
@@ -55,11 +55,11 @@ export async function selectAlias(aliases: string[], action: string): Promise<st
 
 export async function selectAliases(aliases: string[], action: string): Promise<string[]> {
   if (aliases.length === 0) {
-    throw new Error('没有可选择的账号。');
+    throw new Error('没有账号可选。');
   }
 
   const value = await multiselect({
-    message: `请选择要${action}的账号`,
+    message: `选择要${action}的账号`,
     options: aliases.map((alias) => {
       return {
         value: alias,

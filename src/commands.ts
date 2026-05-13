@@ -59,7 +59,7 @@ export async function saveCommand(
     const store = new AccountStore(context.appHome);
     const liveAuth = path.join(context.codexHome, "auth.json");
     if (!(await hasCodexAuth(context.codexHome))) {
-      throw new Error("当前 Codex 没有登录。请先运行 cxa login。");
+      throw new Error("当前未登录。请先运行 cxa login。");
     }
 
     const account = await readAcpAccount(
@@ -73,7 +73,7 @@ export async function saveCommand(
     );
     if (savedAccount !== null) {
       context.stdout.write(
-        `当前登录账号已保存为 ${savedAccount.alias}，没有添加新账号。\n`,
+        `当前账号已保存为 ${savedAccount.alias}。\n`,
       );
       return;
     }
@@ -85,12 +85,12 @@ export async function saveCommand(
     );
     assertAlias(target);
     if (await store.hasAccount(target)) {
-      context.stdout.write(`账号 ${target} 已保存，没有添加新账号。\n`);
+      context.stdout.write(`账号 ${target} 已保存。\n`);
       return;
     }
     await store.createAccount(target, liveAuth, account);
     await store.setActive(target);
-    context.stdout.write(`已保存并激活账号 ${target}。\n`);
+    context.stdout.write(`已保存并激活 ${target}。\n`);
   });
 }
 
@@ -107,7 +107,7 @@ export async function loginCommand(
     );
     assertAlias(target);
     if (await store.hasAccount(target)) {
-      context.stdout.write(`账号 ${target} 已保存，没有添加新账号。\n`);
+      context.stdout.write(`账号 ${target} 已保存。\n`);
       return;
     }
 
@@ -117,7 +117,7 @@ export async function loginCommand(
       const loginAuth = path.join(loginHome, "auth.json");
       await runCodexLogin(context.codexBin, loginHome, context.cwd);
       if (!(await pathExists(loginAuth))) {
-        throw new Error("登录完成后没有生成 auth.json。");
+        throw new Error("登录失败：没有生成 auth.json。");
       }
 
       const account = await readAcpAccount(
@@ -131,13 +131,13 @@ export async function loginCommand(
       );
       if (savedAccount !== null) {
         context.stdout.write(
-          `登录完成。该账号已保存为 ${savedAccount.alias}，没有添加新账号。\n`,
+          `登录完成。账号已保存为 ${savedAccount.alias}。\n`,
         );
         return;
       }
 
       await store.createAccount(target, loginAuth, account);
-      context.stdout.write(`登录完成，已保存账号 ${target}。\n`);
+      context.stdout.write(`已保存 ${target}。\n`);
     } finally {
       await cleanupRunHome(loginHome);
     }
@@ -161,7 +161,7 @@ export async function deleteCommand(
       "没有可删除的账号。",
     );
     await store.deleteAccount(target);
-    context.stdout.write(`已删除账号 ${target}。\n`);
+    context.stdout.write(`已删除 ${target}。\n`);
   });
 }
 
@@ -171,7 +171,7 @@ export async function deactiveCommand(context: CommandContext): Promise<void> {
     await quitCodexDesktop();
     await removePath(path.join(context.codexHome, "auth.json"));
     await store.setActive(null);
-    context.stdout.write("已退出当前 Codex 账号。\n");
+    context.stdout.write("已退出当前账号。\n");
   });
 }
 
@@ -200,7 +200,7 @@ export async function activeCommand(
     await store.writeMeta(mergeMeta(target, meta, account));
     await store.setActive(target);
     await launchCodexDesktop();
-    context.stdout.write(`已激活账号 ${target}。\n`);
+    context.stdout.write(`已激活 ${target}。\n`);
   });
 }
 
@@ -235,7 +235,7 @@ export async function quotaCommand(
             deactivatedAliases.push(alias);
           }
           warnings.push(formatQuotaWarning(alias, result.error));
-          context.stdout.write(`已刷新 ${alias}，额度读取失败，已保留旧额度。\n`);
+          context.stdout.write(`已更新 ${alias}，额度未刷新。\n`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -244,13 +244,13 @@ export async function quotaCommand(
     }
 
     if (failures.length > 0) {
-      throw new Error(`部分账号刷新失败：\n${failures.join("\n")}`);
+      throw new Error(`刷新失败：\n${failures.join("\n")}`);
     }
     if (warnings.length > 0) {
-      context.stderr.write(`部分账号额度读取失败，账号信息已更新，旧额度已保留：\n${warnings.join("\n")}\n`);
+      context.stderr.write(`部分额度未刷新：\n${warnings.join("\n")}\n`);
     }
     if (deactivatedAliases.length > 0) {
-      context.stderr.write(`token 失效的 active 账号已自动 deactive：${deactivatedAliases.join(", ")}\n`);
+      context.stderr.write(`已退出 token 失效的账号：${deactivatedAliases.join(", ")}\n`);
     }
 
     const summaries = await store.listSummaries();
@@ -285,11 +285,11 @@ export async function callCommand(
     }
 
     const wait = createSpinner(context.stdout);
-    wait.start("等待回复...");
+    wait.start("等待回复");
     const results = await Promise.all(
       calls.map(async (call) => callAccount(context, store, call)),
     ).finally(() => {
-      wait.stop("收到回复。");
+      wait.stop("收到回复");
     });
 
     const successes = results.filter((result) => result.error === null);
@@ -300,13 +300,13 @@ export async function callCommand(
     }
     if (failures.length > 0) {
       context.stderr.write(
-        `部分账号 call 失败：\n${failures
+        `部分账号失败：\n${failures
           .map((result) => `${result.alias}: ${result.error}`)
           .join("\n")}\n`,
       );
     }
     if (successes.length === 0 && failures.length > 0) {
-      throw new Error("所有账号 call 失败。");
+      throw new Error("所有账号都失败。");
     }
   });
 }
@@ -440,7 +440,7 @@ export async function autoQuotaStartCommand(
     }
     const failures = Object.entries(startResult.failures);
     if (failures.length > 0) {
-      context.stdout.write("以下账号暂时失败：\n");
+      context.stdout.write("失败账号：\n");
       for (const [alias, reason] of failures) {
         context.stdout.write(`  ${alias}：${reason}\n`);
       }
@@ -612,7 +612,7 @@ export async function refreshCommand(
     }
     const target = requireAccountTarget(
       await resolveAccountTarget(state, alias, "刷新 token"),
-      "请提供账号别名，或先运行 cxa active <alias>。",
+      "请选择账号。",
     );
 
     await store.requireAccount(target);
@@ -625,7 +625,7 @@ export async function refreshCommand(
       const refreshAuth = path.join(refreshHome, "auth.json");
       await runCodexLogin(context.codexBin, refreshHome, context.cwd);
       if (!(await pathExists(refreshAuth))) {
-        throw new Error("登录完成后没有生成 auth.json。");
+        throw new Error("登录失败：没有生成 auth.json。");
       }
 
       const account = await readAcpAccount(
@@ -656,12 +656,12 @@ export async function subscriptionCommand(context: CommandContext): Promise<void
       "没有可更新订阅日期的账号。",
     );
     const dateText = await inputText(
-      "请输入订阅到期日期",
+      "输入订阅日期",
       "May 17, 2026",
       validateSubscriptionDate,
     );
     await updateSubscriptionDate(store, target, dateText);
-    context.stdout.write(`已更新 ${target} 的订阅到期日期为 ${dateText}。\n`);
+    context.stdout.write(`已更新 ${target} 的订阅日期：${dateText}。\n`);
   });
 }
 
@@ -681,7 +681,7 @@ export async function updateSubscriptionDateCommand(
       "没有可更新订阅日期的账号。",
     );
     await updateSubscriptionDate(store, target, dateText);
-    context.stdout.write(`已更新 ${target} 的订阅到期日期为 ${dateText}。\n`);
+    context.stdout.write(`已更新 ${target} 的订阅日期：${dateText}。\n`);
   });
 }
 
@@ -797,10 +797,10 @@ function isSubscriptionPlan(planType: string | null): boolean {
 
 function formatQuotaWarning(alias: string, error: string | null): string {
   if (isTokenInvalidated(error)) {
-    return `${alias}: token 已失效。运行 cxa refresh ${alias} 后重新登录。`;
+    return `${alias}: token 已失效。运行 cxa refresh ${alias}。`;
   }
   const firstLine = error?.split(/\r?\n/).find((line) => line.trim().length > 0);
-  return `${alias}: ${firstLine ?? "ACP 读取额度信息失败"}`;
+  return `${alias}: ${firstLine ?? "读取额度失败"}`;
 }
 
 function renderAutoQuotaStatus(
@@ -949,10 +949,10 @@ function pickCallMessage(): string {
 function formatCallFailure(alias: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (isTokenInvalidated(message) || isAuthFailure(message)) {
-    return `token 已失效。运行 cxa refresh ${alias} 后重试。`;
+    return `token 已失效。运行 cxa refresh ${alias}。`;
   }
   if (isQuotaFailure(message)) {
-    return "没有可用额度，等待 quota reset 后重试。";
+    return "没有可用额度。";
   }
   return firstMeaningfulLine(message);
 }
@@ -994,11 +994,11 @@ async function assertRefreshTarget(
 ): Promise<void> {
   if (expectedEmail !== null) {
     if (account.email === null) {
-      throw new Error(`无法确认登录账号是否为 ${expectedEmail}，已取消刷新 ${alias}。`);
+      throw new Error(`无法确认账号是否为 ${expectedEmail}，已取消。`);
     }
     if (account.email.toLowerCase() !== expectedEmail.toLowerCase()) {
       throw new Error(
-        `登录账号是 ${account.email}，不是 ${expectedEmail}，已取消刷新 ${alias}。`,
+        `登录的是 ${account.email}，不是 ${expectedEmail}。已取消。`,
       );
     }
     return;
@@ -1006,9 +1006,9 @@ async function assertRefreshTarget(
 
   if (account.email !== null) {
     const ok = await confirm(
-      `本次登录账号是 ${account.email}，确认用它刷新 ${alias} 吗？`,
+      `用 ${account.email} 刷新 ${alias}？`,
     );
-    if (!ok) throw new Error("已取消刷新。");
+    if (!ok) throw new Error("已取消。");
   }
 }
 

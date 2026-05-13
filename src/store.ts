@@ -15,10 +15,10 @@ import type { AccountMeta, AccountQuota, AccountSummary, AccountsState } from '.
 export function assertAlias(alias: string): void {
   const trimmed = alias.trim();
   if (trimmed.length === 0) {
-    throw new Error('账号别名不能为空。');
+    throw new Error('请输入账号别名。');
   }
   if (!/^[A-Za-z0-9._@+-]+$/.test(trimmed)) {
-    throw new Error('账号别名只能包含字母、数字、邮箱符号、点、下划线和短横线。');
+    throw new Error('账号别名只能包含字母、数字、@、点、下划线和短横线。');
   }
 }
 
@@ -100,7 +100,7 @@ export class AccountStore {
       throw new Error(`账号 ${alias} 不存在。`);
     }
     if (state.activeAccount === alias) {
-      throw new Error(`账号 ${alias} 当前处于 active 状态，请先执行 cxa deactive。`);
+      throw new Error(`账号 ${alias} 正在使用。请先运行 cxa deactive。`);
     }
     await removePath(accountHome(this.appHome, alias));
     state.accounts = state.accounts.filter((account) => account.alias !== alias);

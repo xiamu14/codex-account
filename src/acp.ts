@@ -76,7 +76,7 @@ export async function readAcpSnapshot(
 ): Promise<AcpSnapshot> {
   const snapshot = await readAcpSnapshotBestEffort(codexBin, codexHome, cwd);
   if (snapshot.quota === null) {
-    throw new Error(snapshot.quotaError ?? "ACP 读取额度信息失败");
+    throw new Error(snapshot.quotaError ?? "读取额度失败");
   }
   return {
     account: snapshot.account,
@@ -102,7 +102,7 @@ export async function readAcpSnapshotBestEffort(
 
   if (!accountMessage || accountMessage.error !== undefined) {
     throw new Error(
-      formatAcpFailure("ACP 读取账号信息失败", output, accountMessage),
+      formatAcpFailure("读取账号失败", output, accountMessage),
     );
   }
 
@@ -112,7 +112,7 @@ export async function readAcpSnapshotBestEffort(
       account,
       quota: null,
       quotaError: formatAcpFailure(
-        "ACP 读取额度信息失败",
+        "读取额度失败",
         output,
         quotaMessage,
       ),
@@ -140,7 +140,7 @@ export async function readAcpAccount(
   );
   const message = parseJsonLines(output).find((item) => item.id === 2);
   if (!message || message.error !== undefined) {
-    throw new Error(formatAcpFailure("ACP 读取账号信息失败", output, message));
+    throw new Error(formatAcpFailure("读取账号失败", output, message));
   }
   return parseAccountInfo(message.result);
 }
@@ -173,7 +173,7 @@ async function runAppServerRequests(
       child.kill();
       const output = Buffer.concat([...chunks, ...errors]).toString("utf8");
       reject(
-        new Error(output.trim() || "codex app-server 等待 ACP 响应超时。"),
+        new Error(output.trim() || "等待 Codex 响应超时。"),
       );
     }, 10_000);
 
@@ -225,7 +225,7 @@ async function runAppServerRequests(
           reject(
             new Error(
               output.trim() ||
-                `codex app-server 退出码 ${code ?? "unknown"}，但没有输出。`,
+                `Codex 无响应：${code ?? "unknown"}。`,
             ),
           ),
         );
@@ -243,19 +243,19 @@ function formatAcpFailure(
 ): string {
   const details: string[] = [title];
   if (message === undefined) {
-    details.push("原因：没有收到对应 id 的 ACP 响应。");
+    details.push("原因：没有收到响应。");
   } else if (message.error !== undefined) {
     details.push(`ACP error：${stringifyUnknown(message.error)}`);
   } else {
-    details.push(`响应内容无法识别：${stringifyUnknown(message)}`);
+    details.push(`响应无法识别：${stringifyUnknown(message)}`);
   }
 
   const trimmed = output.trim();
   if (trimmed.length > 0) {
-    details.push("原始输出：");
+    details.push("输出：");
     details.push(trimmed);
   } else {
-    details.push("原始输出为空。");
+    details.push("没有输出。");
   }
   return details.join("\n");
 }

@@ -23,21 +23,21 @@ import type { CommandContext } from "./types.ts";
 function usage(): string {
   const rows: Array<[command: string, description: string]> = [
     ["bun cli --help", "查看帮助"],
-    ["cxa save", "保存当前已登录账号"],
-    ["cxa login", "登录新账号并保存到本地"],
-    ["cxa list", "查看本地账号和缓存信息"],
+    ["cxa save", "保存当前账号"],
+    ["cxa login", "登录并保存账号"],
+    ["cxa list", "查看账号"],
     ["cxa active", "激活账号"],
-    ["cxa deactive", "退出 Codex 账号"],
-    ["cxa delete", "删除本地保存的账号"],
-    ["cxa call", "给所有账号发一条极短消息，激活 quota reset"],
-    ["cxa call --select", "选择账号并发送极短消息"],
-    ["cxa quota", "刷新所有账号的账号信息和额度缓存"],
-    ["cxa quota --select", "选择账号并刷新额度缓存"],
-    ["cxa quota --start", "开启 5h quota 自动刷新"],
-    ["cxa quota --stop", "停止 5h quota 自动刷新"],
-    ["cxa quota --status", "查看 5h quota 自动刷新状态"],
+    ["cxa deactive", "退出当前账号"],
+    ["cxa delete", "删除账号"],
+    ["cxa call", "刷新 quota 状态"],
+    ["cxa call --select", "选择账号刷新状态"],
+    ["cxa quota", "刷新额度"],
+    ["cxa quota --select", "选择账号刷新额度"],
+    ["cxa quota --start", "开启自动刷新"],
+    ["cxa quota --stop", "停止自动刷新"],
+    ["cxa quota --status", "查看自动刷新"],
     ["cxa refresh", "刷新账号 token"],
-    ["cxa subscription", "选择账号并输入订阅到期日"],
+    ["cxa subscription", "更新订阅日期"],
   ];
   const commandWidth = Math.max(...rows.map(([command]) => command.length));
   return [
@@ -71,7 +71,7 @@ async function run(argv: string[]): Promise<number> {
   switch (command) {
     case "save": {
       if (argv[1] !== undefined) {
-        throw new Error("save 不接收参数，请按提示输入账号别名。");
+        throw new Error("save 不需要参数。");
       }
       await saveCommand(context);
       return 0;
@@ -79,7 +79,7 @@ async function run(argv: string[]): Promise<number> {
 
     case "login":
       if (argv[1] !== undefined) {
-        throw new Error("login 不接收参数，请按提示输入账号别名。");
+        throw new Error("login 不需要参数。");
       }
       await loginCommand(context);
       return 0;
@@ -97,10 +97,10 @@ async function run(argv: string[]): Promise<number> {
       return 0;
     case "call":
       if (argv[1] !== undefined && argv[1] !== "--select") {
-        throw new Error("call 不接收账号别名。请使用 cxa call 或 cxa call --select。");
+        throw new Error("call 只支持 --select。");
       }
       if (argv[2] !== undefined)
-        throw new Error("call 只支持 --select 参数。");
+        throw new Error("call 只支持一个参数。");
       await callCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "quota":
@@ -124,20 +124,20 @@ async function run(argv: string[]): Promise<number> {
         return 0;
       }
       if (argv[1] !== undefined && argv[1] !== "--select") {
-        throw new Error("quota 不接收账号别名。请使用 cxa quota 或 cxa quota --select。");
+        throw new Error("quota 只支持 --select、--start、--stop、--status。");
       }
       await quotaCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "refresh":
       if (argv[2] !== undefined)
-        throw new Error("refresh 只接收一个账号别名。");
+        throw new Error("refresh 最多接收一个账号。");
       await refreshCommand(context, argv[1]);
       return 0;
 
     case "subscription": {
       if (argv[1] !== undefined) {
         throw new Error(
-          "subscription 不接收参数，请按提示选择账号并输入订阅到期日期。",
+          "subscription 不需要参数。",
         );
       }
       await subscriptionCommand(context);

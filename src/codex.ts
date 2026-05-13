@@ -79,7 +79,7 @@ export async function runCodexCall(
       if (settled) return;
       settled = true;
       child.kill();
-      reject(new Error("codex exec 等待响应超时。"));
+      reject(new Error("codex exec 超时。"));
     }, 60_000);
 
     child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -108,7 +108,7 @@ export async function runCodexCall(
       reject(
         new Error(
           output.trim() ||
-            `codex exec 失败，退出码 ${code ?? "unknown"}。`,
+            `codex exec 失败：${code ?? "unknown"}。`,
         ),
       );
     });
@@ -200,7 +200,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
     let loginStarted = false;
     const timeout = setTimeout(
       () => {
-        finish(() => reject(new Error("登录等待超时，请重新运行 cxa login。")));
+        finish(() => reject(new Error("登录超时。请重新运行 cxa login。")));
       },
       15 * 60 * 1000,
     );
@@ -239,7 +239,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
           finish(() =>
             reject(
               new Error(
-                formatAppServerFailure("启动登录失败", output, loginMessage),
+                formatAppServerFailure("登录启动失败", output, loginMessage),
               ),
             ),
           );
@@ -251,7 +251,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
             reject(
               new Error(
                 formatAppServerFailure(
-                  "启动登录失败：没有收到登录链接",
+                  "没有收到登录链接",
                   output,
                   loginMessage,
                 ),
@@ -261,7 +261,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
           return;
         }
         process.stdout.write(`登录链接：${authUrl}\n`);
-        process.stdout.write("请打开链接完成登录，登录完成后会自动继续。\n");
+        process.stdout.write("打开链接完成登录。\n");
       }
     });
     child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
@@ -274,7 +274,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
       reject(
         new Error(
           output.trim() ||
-            `codex app-server 退出码 ${code ?? "unknown"}，登录未完成。`,
+            `登录未完成：${code ?? "unknown"}。`,
         ),
       );
     });
@@ -362,7 +362,7 @@ function formatAppServerFailure(
   }
   const trimmed = output.trim();
   if (trimmed.length > 0) {
-    details.push("原始输出：");
+    details.push("输出：");
     details.push(trimmed);
   }
   return details.join("\n");
