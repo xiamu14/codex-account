@@ -24,6 +24,8 @@ import { autoQuotaStatePath } from "../src/paths.ts";
 import { AccountStore } from "../src/store.ts";
 import type { AccountQuota, AccountSummary, CommandContext } from "../src/types.ts";
 
+process.env.CXA_QUOTA_REFRESH_DELAY_MS = "0";
+
 async function makeContext(): Promise<CommandContext> {
   const appHome = await mkdtemp(path.join(tmpdir(), "cxa-command-"));
   return {
@@ -611,8 +613,8 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("token 已失效");
     expect(output.text).toContain("连续失败 3 次");
     expect(output.text).toContain("已暂停");
-    expect(output.text).toMatch(/work@example\.com\s{2,}今天/);
-    expect(output.text).toMatch(/longer-work@example\.com\s{2,}今天/);
+    expect(output.text).toMatch(/work@example\.com\s{2,}(今天|明天)/);
+    expect(output.text).toMatch(/longer-work@example\.com\s{2,}(今天|明天)/);
   });
 });
 
@@ -849,7 +851,7 @@ function makeQuota(percentLeft: number, resetsAt: string): AccountQuota {
 }
 
 function pastIso(): string {
-  return new Date(Date.now() - 60_000).toISOString();
+  return new Date(Date.now() - 60 * 60_000).toISOString();
 }
 
 function futureIso(): string {

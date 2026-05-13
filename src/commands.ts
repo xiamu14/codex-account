@@ -50,6 +50,10 @@ const CALL_MESSAGES = [
   "咖啡",
   "天气",
 ];
+const AUTO_QUOTA_STAGGER_STEP_MINUTES = 7;
+const AUTO_QUOTA_STAGGER_MIN_GAP_MINUTES = 5;
+const QUOTA_REFRESH_MIN_DELAY_MS = 1_000;
+const QUOTA_REFRESH_MAX_DELAY_MS = 5_000;
 
 export async function saveCommand(
   context: CommandContext,
@@ -224,7 +228,8 @@ export async function quotaCommand(
     const failures: string[] = [];
     const warnings: string[] = [];
     const deactivatedAliases: string[] = [];
-    for (const alias of targets) {
+    for (const [index, alias] of targets.entries()) {
+      await waitBeforeQuotaRefresh(index, targets.length);
       try {
         const result = await refreshAccountQuota(context, store, alias);
         if (result.quota !== null) {
@@ -509,6 +514,7 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
     const recoveredAliases: string[] = [];
     const handledFiveHourResets = { ...current.handledFiveHourResets };
     const state = await store.loadState();
+    const quotaByAlias = new Map<string, AccountQuota>();
 
     for (const account of state.accounts) {
       const alias = account.alias;
@@ -534,14 +540,32 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
         failures[alias] = "缺少 5h 重置时间。";
         continue;
       }
-      const resetValue = reset;
-      if (resetTime.getTime() > now.getTime()) {
+      quotaByAlias.set(alias, quota);
+    }
+
+    const scheduleByAlias = buildAutoQuotaSchedule(
+      [...quotaByAlias.entries()].map(([alias, quota]) => ({
+        alias,
+        reset: quota.fiveHour?.resetsAt ?? "",
+      })),
+    );
+
+    for (const account of state.accounts) {
+      const alias = account.alias;
+      const quota = quotaByAlias.get(alias);
+      if (quota === undefined) continue;
+      const resetValue = quota.fiveHour?.resetsAt ?? null;
+      if (resetValue === null) continue;
+      const dueAt = scheduleByAlias.get(alias);
+      if (dueAt === undefined) continue;
+      if (dueAt.getTime() > now.getTime()) {
         recoveredAliases.push(alias);
         continue;
       }
       if (handledFiveHourResets[alias] === resetValue) {
         continue;
       }
+      await waitBeforeQuotaRefresh(successes.length, state.accounts.length);
 
       const result = await callAccount(context, store, {
         alias,
@@ -598,6 +622,27 @@ function mergeFailureCounts(
     next[alias] = (next[alias] ?? 0) + 1;
   }
   return next;
+}
+
+async function waitBeforeQuotaRefresh(index: number, total: number): Promise<void> {
+  if (index === 0 || total <= 1) return;
+  const override = process.env.CXA_QUOTA_REFRESH_DELAY_MS;
+  if (override !== undefined) {
+    const delay = Number.parseInt(override, 10);
+    if (Number.isFinite(delay) && delay >= 0) {
+      if (delay > 0) await sleep(delay);
+      return;
+    }
+  }
+  await sleep(randomInt(QUOTA_REFRESH_MIN_DELAY_MS, QUOTA_REFRESH_MAX_DELAY_MS));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomInt(min: number, max: number): number {
+  return min + Math.floor(Math.random() * (max - min + 1));
 }
 
 export async function refreshCommand(
@@ -861,12 +906,21 @@ function renderAutoQuotaStatus(
     lines.push(chalk.dim("其他账号不受影响。"));
   }
 
-  const nextItems = summaries
+  const nextRawItems = summaries
     .map((summary) => ({
       alias: summary.alias,
       reset: parseDate(summary.quota?.fiveHour?.resetsAt ?? null),
+      rawReset: summary.quota?.fiveHour?.resetsAt ?? null,
     }))
-    .filter((item): item is { alias: string; reset: Date } => item.reset !== null)
+    .filter((item): item is { alias: string; reset: Date; rawReset: string } => item.reset !== null && item.rawReset !== null);
+  const nextSchedule = buildAutoQuotaSchedule(
+    nextRawItems.map((item) => ({ alias: item.alias, reset: item.rawReset })),
+  );
+  const nextItems = nextRawItems
+    .map((item) => ({
+      alias: item.alias,
+      reset: nextSchedule.get(item.alias) ?? item.reset,
+    }))
     .sort((left, right) => left.reset.getTime() - right.reset.getTime());
 
   if (nextItems.length > 0) {
@@ -902,6 +956,62 @@ function parseDate(value: string | null): Date | null {
   if (value === null || value.trim().length === 0) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildAutoQuotaSchedule(
+  items: Array<{ alias: string; reset: string }>,
+): Map<string, Date> {
+  const groups = new Map<string, Array<{ alias: string; reset: string }>>();
+  for (const item of items) {
+    const group = groups.get(item.reset) ?? [];
+    group.push(item);
+    groups.set(item.reset, group);
+  }
+
+  const schedule = new Map<string, Date>();
+  for (const [reset, group] of groups.entries()) {
+    const base = new Date(reset);
+    if (Number.isNaN(base.getTime())) continue;
+    const ordered = [...group].sort(
+      (left, right) =>
+        stableHash(`${left.alias}:${reset}`) - stableHash(`${right.alias}:${reset}`),
+    );
+    for (const [index, item] of ordered.entries()) {
+      const offsetMinutes =
+        index * AUTO_QUOTA_STAGGER_STEP_MINUTES +
+        stableHash(`${item.alias}:${reset}:offset`) % AUTO_QUOTA_STAGGER_STEP_MINUTES;
+      schedule.set(item.alias, new Date(base.getTime() + offsetMinutes * 60_000));
+    }
+  }
+  return spreadSchedule(schedule);
+}
+
+function spreadSchedule(schedule: Map<string, Date>): Map<string, Date> {
+  const items = [...schedule.entries()].sort(
+    ([leftAlias, leftDate], [rightAlias, rightDate]) =>
+      leftDate.getTime() - rightDate.getTime() ||
+      stableHash(leftAlias) - stableHash(rightAlias),
+  );
+  const spread = new Map<string, Date>();
+  let previousTime: number | null = null;
+  for (const [alias, date] of items) {
+    const minTime = previousTime === null
+      ? date.getTime()
+      : previousTime + AUTO_QUOTA_STAGGER_MIN_GAP_MINUTES * 60_000;
+    const nextTime = Math.max(date.getTime(), minTime);
+    spread.set(alias, new Date(nextTime));
+    previousTime = nextTime;
+  }
+  return spread;
+}
+
+function stableHash(value: string): number {
+  let hash = 2166136261;
+  for (const char of value) {
+    hash ^= char.codePointAt(0)!;
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function maxTextWidth(values: string[]): number {
