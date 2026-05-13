@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import {
+  autoQuotaStartCommand,
+  autoQuotaStatusCommand,
+  autoQuotaStopCommand,
+  autoQuotaTickCommand,
   callCommand,
   deactiveCommand,
   deleteCommand,
@@ -15,8 +19,10 @@ import {
   saveCommand,
   updateSubscriptionDateCommand,
 } from "../src/commands.ts";
+import { readAutoQuotaState, writeAutoQuotaState } from "../src/auto-quota.ts";
+import { autoQuotaStatePath } from "../src/paths.ts";
 import { AccountStore } from "../src/store.ts";
-import type { AccountSummary, CommandContext } from "../src/types.ts";
+import type { AccountQuota, AccountSummary, CommandContext } from "../src/types.ts";
 
 async function makeContext(): Promise<CommandContext> {
   const appHome = await mkdtemp(path.join(tmpdir(), "cxa-command-"));
@@ -445,6 +451,171 @@ describe("callCommand", () => {
   });
 });
 
+describe("auto quota commands", () => {
+  test("status accepts auto quota state written before failure counts existed", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    await writeFile(
+      autoQuotaStatePath(context.appHome),
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        intervalMinutes: 30,
+        lastTickAt: null,
+        lastCallAt: null,
+        lastSuccessAliases: [],
+        lastFailureByAlias: {},
+        lastQuotaFetchAliases: [],
+        handledFiveHourResets: {},
+        updatedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
+    await autoQuotaStatusCommand(context);
+
+    expect(output.text).toContain("自动刷新：已开启");
+  });
+
+  test("start and stop update the local auto refresh switch", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      fiveHourPercentLeft: 74,
+      fiveHourReset: futureIso(),
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await autoQuotaStartCommand(context, { installLaunchAgent: false });
+    expect((await readAutoQuotaState(context.appHome)).enabled).toBe(true);
+    expect((await readAutoQuotaState(context.appHome)).lastQuotaFetchAliases).toEqual(["user@example.com"]);
+    expect((await store.readQuota("user@example.com"))?.fiveHour?.percentLeft).toBe(74);
+    expect(output.text).toContain("已开启 5h quota 自动刷新");
+    expect(output.text).toContain("已先刷新当前额度");
+    expect(output.text).toContain("user@example.com");
+
+    await autoQuotaStopCommand(context, { uninstallLaunchAgent: false });
+    expect((await readAutoQuotaState(context.appHome)).enabled).toBe(false);
+    expect(output.text).toContain("已停止 5h quota 自动刷新");
+  });
+
+  test("tick fetches missing quota and waits when the account is not due", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      fiveHourPercentLeft: 80,
+      fiveHourReset: futureIso(),
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await enableAutoQuota(context.appHome);
+
+    await autoQuotaTickCommand(context);
+
+    const autoState = await readAutoQuotaState(context.appHome);
+    expect(autoState.lastQuotaFetchAliases).toEqual(["user@example.com"]);
+    expect(autoState.lastSuccessAliases).toEqual([]);
+    expect(await store.readQuota("user@example.com")).not.toBeNull();
+  });
+
+  test("tick calls due accounts only when 5h quota is below 90 percent", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const lowAuth = path.join(context.appHome, "low-auth.json");
+    const highAuth = path.join(context.appHome, "high-auth.json");
+    await writeFile(lowAuth, '{"token":"low"}', "utf8");
+    await writeFile(highAuth, '{"token":"high"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("low@example.com", lowAuth, {
+      email: "low@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("high@example.com", highAuth, {
+      email: "high@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    const reset = pastIso();
+    await store.writeQuota("low@example.com", makeQuota(50, reset));
+    await store.writeQuota("high@example.com", makeQuota(90, reset));
+    await enableAutoQuota(context.appHome);
+
+    await autoQuotaTickCommand(context);
+
+    const autoState = await readAutoQuotaState(context.appHome);
+    expect(autoState.lastSuccessAliases).toEqual(["low@example.com"]);
+    expect(autoState.handledFiveHourResets["low@example.com"]).toBe(reset);
+    expect(autoState.handledFiveHourResets["high@example.com"]).toBeUndefined();
+  });
+
+  test("status explains successful and failed accounts clearly", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("work@example.com", authPath, {
+      email: "work@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("longer-work@example.com", authPath, {
+      email: "longer-work@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.writeQuota("work@example.com", makeQuota(50, futureIso()));
+    await store.writeQuota("longer-work@example.com", makeQuota(95, futureIso()));
+    await writeAutoQuotaState(context.appHome, {
+      version: 1,
+      enabled: true,
+      intervalMinutes: 30,
+      lastTickAt: new Date().toISOString(),
+      lastCallAt: new Date().toISOString(),
+      lastSuccessAliases: ["work@example.com"],
+      lastFailureByAlias: {
+        "old@example.com": "token 已失效，请运行 bun cli refresh old@example.com",
+      },
+      consecutiveFailureCountByAlias: {
+        "old@example.com": 3,
+      },
+      lastQuotaFetchAliases: ["work@example.com"],
+      handledFiveHourResets: {},
+      updatedAt: new Date().toISOString(),
+    });
+
+    await autoQuotaStatusCommand(context);
+
+    expect(output.text).toContain("自动刷新：已开启");
+    expect(output.text).toContain("后台任务：");
+    expect(output.text).toContain("已刷新：");
+    expect(output.text).toContain("work@example.com");
+    expect(output.text).toContain("有 1 个账号暂时无法自动刷新");
+    expect(output.text).toContain("old@example.com");
+    expect(output.text).toContain("token 已失效");
+    expect(output.text).toContain("已连续失败 3 次");
+    expect(output.text).toContain("先暂时放到一边");
+    expect(output.text).toMatch(/work@example\.com\s{2,}今天/);
+    expect(output.text).toContain("longer-work@example.com  额度还充足");
+  });
+});
+
 describe("refreshCommand", () => {
   test("logs in with an isolated Codex home and refreshes the requested account", async () => {
     const output = new CaptureStream();
@@ -645,6 +816,46 @@ function makeSummary(
   };
 }
 
+async function enableAutoQuota(appHome: string): Promise<void> {
+  await writeAutoQuotaState(appHome, {
+    version: 1,
+    enabled: true,
+    intervalMinutes: 30,
+    lastTickAt: null,
+    lastCallAt: null,
+    lastSuccessAliases: [],
+    lastFailureByAlias: {},
+    consecutiveFailureCountByAlias: {},
+    lastQuotaFetchAliases: [],
+    handledFiveHourResets: {},
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function makeQuota(percentLeft: number, resetsAt: string): AccountQuota {
+  return {
+    fiveHour: {
+      percentLeft,
+      resetsAt,
+      rawReset: resetsAt,
+    },
+    weekly: {
+      percentLeft: 80,
+      resetsAt: null,
+      rawReset: null,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function pastIso(): string {
+  return new Date(Date.now() - 60_000).toISOString();
+}
+
+function futureIso(): string {
+  return new Date(Date.now() + 60 * 60_000).toISOString();
+}
+
 class CaptureStream extends Writable {
   text = "";
 
@@ -668,12 +879,16 @@ async function writeLiveAuth(
 
 async function writeFakeCodex(
   root: string,
-  options: { quotaError?: string } = {},
+  options: { quotaError?: string; fiveHourPercentLeft?: number; fiveHourReset?: string } = {},
 ): Promise<string> {
   const scriptPath = path.join(root, "fake-codex.mjs");
+  const fiveHour = {
+    percentLeft: options.fiveHourPercentLeft ?? 80,
+    resetsAt: options.fiveHourReset,
+  };
   const quotaLine =
     options.quotaError === undefined
-      ? 'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: { percentLeft: 80 }, weekly: { percentLeft: 55 } } } }) + "\\n");'
+      ? `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: ${JSON.stringify(fiveHour)}, weekly: { percentLeft: 55 } } } }) + "\\n");`
       : `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, error: { code: -32603, message: ${JSON.stringify(options.quotaError)} } }) + "\\n");`;
   await writeFile(
     scriptPath,

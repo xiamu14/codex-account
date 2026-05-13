@@ -1,6 +1,10 @@
 #!/usr/bin/env bun
 import {
   activeCommand,
+  autoQuotaStartCommand,
+  autoQuotaStatusCommand,
+  autoQuotaStopCommand,
+  autoQuotaTickCommand,
   callCommand,
   deactiveCommand,
   deleteCommand,
@@ -29,6 +33,9 @@ function usage(): string {
     ["cxa call --select", "选择账号并发送极短消息"],
     ["cxa quota", "刷新所有账号的账号信息和额度缓存"],
     ["cxa quota --select", "选择账号并刷新额度缓存"],
+    ["cxa quota --start", "开启 5h quota 自动刷新"],
+    ["cxa quota --stop", "停止 5h quota 自动刷新"],
+    ["cxa quota --status", "查看 5h quota 自动刷新状态"],
     ["cxa refresh", "刷新账号 token"],
     ["cxa subscription", "选择账号并输入订阅到期日"],
   ];
@@ -97,11 +104,28 @@ async function run(argv: string[]): Promise<number> {
       await callCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "quota":
+      if (argv[2] !== undefined) {
+        throw new Error("quota 只支持一个参数。");
+      }
+      if (argv[1] === "--start") {
+        await autoQuotaStartCommand(context);
+        return 0;
+      }
+      if (argv[1] === "--stop") {
+        await autoQuotaStopCommand(context);
+        return 0;
+      }
+      if (argv[1] === "--status") {
+        await autoQuotaStatusCommand(context);
+        return 0;
+      }
+      if (argv[1] === "--tick") {
+        await autoQuotaTickCommand(context);
+        return 0;
+      }
       if (argv[1] !== undefined && argv[1] !== "--select") {
         throw new Error("quota 不接收账号别名。请使用 cxa quota 或 cxa quota --select。");
       }
-      if (argv[2] !== undefined)
-        throw new Error("quota 只支持 --select 参数。");
       await quotaCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "refresh":

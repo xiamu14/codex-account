@@ -39,6 +39,20 @@ export type AccountSummary = {
   quota: AccountQuota | null;
 };
 
+export type AutoQuotaState = {
+  version: 1;
+  enabled: boolean;
+  intervalMinutes: number;
+  lastTickAt: string | null;
+  lastCallAt: string | null;
+  lastSuccessAliases: string[];
+  lastFailureByAlias: Record<string, string>;
+  consecutiveFailureCountByAlias: Record<string, number>;
+  lastQuotaFetchAliases: string[];
+  handledFiveHourResets: Record<string, string>;
+  updatedAt: string;
+};
+
 export type AcpAccountInfo = {
   email: string | null;
   planType: string | null;

@@ -1,4 +1,4 @@
-import type { AccountMeta, AccountQuota, AccountsState, LimitStatus } from './types.ts';
+import type { AccountMeta, AccountQuota, AccountsState, AutoQuotaState, LimitStatus } from './types.ts';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -56,4 +56,35 @@ export function isAccountsState(value: unknown): value is AccountsState {
     }
   }
   return isNullableString(value.activeAccount) && isString(value.updatedAt);
+}
+
+export function isStringRecord(value: unknown): value is Record<string, string> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(isString);
+}
+
+export function isNumberRecord(value: unknown): value is Record<string, number> {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(isNumber);
+}
+
+export function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isString);
+}
+
+export function isAutoQuotaState(value: unknown): value is AutoQuotaState {
+  if (!isRecord(value)) return false;
+  return (
+    value.version === 1 &&
+    typeof value.enabled === 'boolean' &&
+    isNumber(value.intervalMinutes) &&
+    isNullableString(value.lastTickAt) &&
+    isNullableString(value.lastCallAt) &&
+    isStringArray(value.lastSuccessAliases) &&
+    isStringRecord(value.lastFailureByAlias) &&
+    isNumberRecord(value.consecutiveFailureCountByAlias) &&
+    isStringArray(value.lastQuotaFetchAliases) &&
+    isStringRecord(value.handledFiveHourResets) &&
+    isString(value.updatedAt)
+  );
 }

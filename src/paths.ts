@@ -33,6 +33,10 @@ export function accountQuotaPath(appHome: string, alias: string): string {
   return path.join(accountHome(appHome, alias), 'quota.json');
 }
 
+export function autoQuotaStatePath(appHome: string): string {
+  return path.join(appHome, 'auto-quota.json');
+}
+
 export function runsRoot(appHome: string): string {
   return path.join(appHome, 'runs');
 }
