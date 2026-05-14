@@ -551,7 +551,7 @@ describe("auto quota commands", () => {
 
     await Promise.race([
       autoQuotaTickCommand(context),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("tick should not wait inside the lock")), 250)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("tick should not wait inside the lock")), 1_000)),
     ]);
 
     const autoState = await readAutoQuotaState(context.appHome);
@@ -583,7 +583,10 @@ describe("auto quota commands", () => {
 
   test("tick calls every due account regardless of remaining 5h quota", async () => {
     const context = await makeContext();
-    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const reset = pastIso();
+    context.codexBin = await writeCallFakeCodex(context.appHome, {
+      fiveHourReset: reset,
+    });
     const lowAuth = path.join(context.appHome, "low-auth.json");
     const highAuth = path.join(context.appHome, "high-auth.json");
     await writeFile(lowAuth, '{"token":"low"}', "utf8");
@@ -599,7 +602,6 @@ describe("auto quota commands", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    const reset = pastIso();
     await store.writeQuota("low@example.com", makeQuota(50, reset));
     await store.writeQuota("high@example.com", makeQuota(90, reset));
     await enableAutoQuota(context.appHome);
@@ -637,6 +639,7 @@ describe("auto quota commands", () => {
       intervalMinutes: 30,
       lastTickAt: new Date().toISOString(),
       nextCheckAt: futureIso(),
+      lastQuotaFetchAt: new Date().toISOString(),
       lastCallAt: new Date().toISOString(),
       lastSuccessAliases: ["work@example.com"],
       lastFailureByAlias: {
@@ -655,7 +658,7 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("自动刷新：已开启");
     expect(output.text).toContain("后台服务：");
     expect(output.text).toContain("下次检查：");
-    expect(output.text).toContain("已刷新：");
+    expect(output.text).toContain("已触发：");
     expect(output.text).toContain("work@example.com");
     expect(output.text).toContain("失败账号：1 个");
     expect(output.text).toContain("old@example.com");
@@ -874,6 +877,7 @@ async function enableAutoQuota(appHome: string): Promise<void> {
     intervalMinutes: 30,
     lastTickAt: null,
     nextCheckAt: null,
+    lastQuotaFetchAt: null,
     lastCallAt: null,
     lastSuccessAliases: [],
     lastFailureByAlias: {},
@@ -998,14 +1002,27 @@ async function writeRefreshFakeCodex(
   return scriptPath;
 }
 
-async function writeCallFakeCodex(root: string): Promise<string> {
+async function writeCallFakeCodex(
+  root: string,
+  options: { fiveHourReset?: string } = {},
+): Promise<string> {
   const scriptPath = path.join(root, "fake-call-codex.mjs");
+  const fiveHour = {
+    percentLeft: 80,
+    resetsAt: options.fiveHourReset ?? new Date(Date.now() + 60 * 60_000).toISOString(),
+  };
   await writeFile(
     scriptPath,
     [
       "#!/usr/bin/env node",
       'import { readFileSync } from "node:fs";',
       'import path from "node:path";',
+      "if (process.argv[2] === 'app-server') {",
+      '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) + "\\n");',
+      '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { account: { email: "fresh@example.com", planType: "plus" } } }) + "\\n");',
+      `  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: ${JSON.stringify(fiveHour)}, weekly: { percentLeft: 55 } } } }) + "\\n");`,
+      "  process.exit(0);",
+      "}",
       "if (process.argv[2] !== 'exec') { process.exit(0); }",
       "const prompt = process.argv.at(-1);",
       "const allowedPrompts = new Set(['水杯', '书桌', '窗户', '铅笔', '纸张', '地图', '钟表', '椅子', '咖啡', '天气']);",

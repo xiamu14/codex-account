@@ -427,6 +427,7 @@ export async function autoQuotaStartCommand(
       nextCheckAt: new Date(
         now.getTime() + randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS),
       ).toISOString(),
+      lastQuotaFetchAt: startResult.successes.length > 0 ? now.toISOString() : state.lastQuotaFetchAt,
       lastFailureByAlias: startResult.failures,
       consecutiveFailureCountByAlias: mergeFailureCounts(
         state.consecutiveFailureCountByAlias,
@@ -524,14 +525,58 @@ export async function autoQuotaServiceCommand(context: CommandContext): Promise<
     }
 
     await autoQuotaTickCommand(context);
+    const now = new Date();
     const delay = randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS);
-    const nextCheckAt = new Date(Date.now() + delay).toISOString();
+    const nextCheckAt = await resolveNextAutoQuotaCheckAt(context, now, delay);
     await writeAutoQuotaState(context.appHome, {
       ...await readAutoQuotaState(context.appHome),
-      nextCheckAt,
+      nextCheckAt: nextCheckAt.toISOString(),
     });
-    await sleep(delay);
+    await sleep(Math.max(0, nextCheckAt.getTime() - Date.now()));
   }
+}
+
+async function resolveNextAutoQuotaCheckAt(
+  context: CommandContext,
+  now: Date,
+  randomDelayMs: number,
+): Promise<Date> {
+  const randomCheckAt = new Date(now.getTime() + randomDelayMs);
+  const store = new AccountStore(context.appHome);
+  const [accounts, state] = await Promise.all([
+    store.listSummaries(),
+    readAutoQuotaState(context.appHome),
+  ]);
+  const schedule = buildAutoQuotaSchedule(
+    accounts
+      .map((account) => ({
+        alias: account.alias,
+        reset: account.quota?.fiveHour?.resetsAt ?? null,
+      }))
+      .filter(
+        (item): item is { alias: string; reset: string } => item.reset !== null,
+      ),
+  );
+
+  let nextDueAt: Date | null = null;
+  for (const account of accounts) {
+    const reset = account.quota?.fiveHour?.resetsAt ?? null;
+    if (reset === null || state.handledFiveHourResets[account.alias] === reset) {
+      continue;
+    }
+    const dueAt = schedule.get(account.alias);
+    if (dueAt === undefined || dueAt.getTime() <= now.getTime()) {
+      continue;
+    }
+    if (nextDueAt === null || dueAt.getTime() < nextDueAt.getTime()) {
+      nextDueAt = dueAt;
+    }
+  }
+
+  if (nextDueAt !== null && nextDueAt.getTime() < randomCheckAt.getTime()) {
+    return nextDueAt;
+  }
+  return randomCheckAt;
 }
 
 export async function autoQuotaTickCommand(context: CommandContext): Promise<void> {
@@ -551,24 +596,17 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
     const state = await store.loadState();
     const quotaByAlias = new Map<string, AccountQuota>();
 
-    for (const account of state.accounts) {
+    for (const [index, account] of state.accounts.entries()) {
       const alias = account.alias;
-      let quota = await store.readQuota(alias);
-      if (needsAutoQuotaFetch(quota)) {
-        const fetched = await refreshQuotaQuietly(context, store, alias);
-        if (fetched.quota === null) {
-          failures[alias] = formatAutoQuotaFailure(alias, fetched.error);
-          continue;
-        }
-        quota = fetched.quota;
-        quotaFetches.push(alias);
-        recoveredAliases.push(alias);
-      }
-      if (quota === null) {
-        failures[alias] = "读取额度失败。";
+      await waitBeforeQuotaRefresh(index, state.accounts.length);
+      const fetched = await refreshQuotaQuietly(context, store, alias);
+      if (fetched.quota === null) {
+        failures[alias] = formatAutoQuotaFailure(alias, fetched.error);
         continue;
       }
-
+      const quota = fetched.quota;
+      pushUnique(quotaFetches, alias);
+      recoveredAliases.push(alias);
       const reset = quota.fiveHour?.resetsAt ?? null;
       const resetTime = reset === null ? null : new Date(reset);
       if (reset === null || resetTime === null || Number.isNaN(resetTime.getTime())) {
@@ -620,8 +658,11 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       const refreshed = await refreshQuotaQuietly(context, store, alias);
       if (refreshed.quota === null) {
         failures[alias] = "已发送刷新请求，但读取新额度失败。";
-      } else if (refreshed.quota.fiveHour?.resetsAt !== resetValue) {
-        delete handledFiveHourResets[alias];
+      } else {
+        pushUnique(quotaFetches, alias);
+        if (refreshed.quota.fiveHour?.resetsAt !== resetValue) {
+          delete handledFiveHourResets[alias];
+        }
       }
     }
 
@@ -630,6 +671,7 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
       lastTickAt: now.toISOString(),
       nextCheckAt: current.nextCheckAt,
+      lastQuotaFetchAt: quotaFetches.length > 0 ? now.toISOString() : current.lastQuotaFetchAt,
       lastCallAt: successes.length > 0 ? now.toISOString() : current.lastCallAt,
       lastSuccessAliases: successes,
       lastFailureByAlias: failures,
@@ -644,10 +686,8 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
   });
 }
 
-function needsAutoQuotaFetch(quota: AccountQuota | null): boolean {
-  return quota === null ||
-    quota.fiveHour === null ||
-    quota.fiveHour.resetsAt === null;
+function pushUnique(values: string[], value: string): void {
+  if (!values.includes(value)) values.push(value);
 }
 
 function mergeFailureCounts(
@@ -911,18 +951,19 @@ function renderAutoQuotaStatus(
     "",
     `${chalk.bold("上次检查：")}${chalk.dim(formatFriendlyTime(state.lastTickAt))}`,
     `${chalk.bold("下次检查：")}${chalk.dim(formatNextCheckTime(state))}`,
+    `${chalk.bold("上次额度刷新：")}${chalk.dim(formatFriendlyTime(state.lastQuotaFetchAt))}`,
   ];
 
   if (state.lastCallAt !== null) {
-    lines.push(`${chalk.bold("上次自动刷新：")}${chalk.dim(formatFriendlyTime(state.lastCallAt))}`);
+    lines.push(`${chalk.bold("上次触发重置：")}${chalk.dim(formatFriendlyTime(state.lastCallAt))}`);
     if (state.lastSuccessAliases.length > 0) {
-      lines.push(`  ${chalk.green("已刷新：")}`);
+      lines.push(`  ${chalk.green("已触发：")}`);
       for (const alias of state.lastSuccessAliases) {
         lines.push(`    ${chalk.green(alias)}`);
       }
     }
   } else {
-    lines.push(`${chalk.bold("上次自动刷新：")}${chalk.dim("暂无")}`);
+    lines.push(`${chalk.bold("上次触发重置：")}${chalk.dim("暂无")}`);
   }
 
   if (state.lastQuotaFetchAliases.length > 0) {

@@ -45,6 +45,7 @@ export type AutoQuotaState = {
   intervalMinutes: number;
   lastTickAt: string | null;
   nextCheckAt: string | null;
+  lastQuotaFetchAt: string | null;
   lastCallAt: string | null;
   lastSuccessAliases: string[];
   lastFailureByAlias: Record<string, string>;
