@@ -507,7 +507,7 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       return;
     }
 
-    const now = new Date();
+    let now = new Date();
     const successes: string[] = [];
     const quotaFetches: string[] = [];
     const failures: Record<string, string> = {};
@@ -559,8 +559,13 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       const dueAt = scheduleByAlias.get(alias);
       if (dueAt === undefined) continue;
       if (dueAt.getTime() > now.getTime()) {
-        recoveredAliases.push(alias);
-        continue;
+        const waitMs = dueAt.getTime() - now.getTime();
+        if (waitMs > AUTO_QUOTA_INTERVAL_MINUTES * 60_000) {
+          recoveredAliases.push(alias);
+          continue;
+        }
+        await sleep(waitMs);
+        now = new Date();
       }
       if (handledFiveHourResets[alias] === resetValue) {
         continue;
