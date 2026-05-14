@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { withLock } from "../src/lock.ts";
@@ -37,6 +37,19 @@ describe("withLock", () => {
     const target = lockPath(appHome);
     await mkdir(target, { recursive: true });
     await writeFile(path.join(target, "owner"), `${process.pid}\n2026-05-12T00:00:00.000Z\n`, "utf8");
+
+    await expect(withLock(appHome, async () => undefined)).rejects.toThrow(
+      "另一个 cxa 操作正在运行",
+    );
+  });
+
+  test("does not reclaim an old lock while the owner process is still alive", async () => {
+    const appHome = await makeAppHome();
+    const target = lockPath(appHome);
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "owner"), `${process.pid}\n2026-05-12T00:00:00.000Z\n`, "utf8");
+    const old = new Date(Date.now() - 5 * 60_000);
+    await utimes(target, old, old);
 
     await expect(withLock(appHome, async () => undefined)).rejects.toThrow(
       "另一个 cxa 操作正在运行",

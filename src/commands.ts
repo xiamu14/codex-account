@@ -559,13 +559,8 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       const dueAt = scheduleByAlias.get(alias);
       if (dueAt === undefined) continue;
       if (dueAt.getTime() > now.getTime()) {
-        const waitMs = dueAt.getTime() - now.getTime();
-        if (waitMs > AUTO_QUOTA_INTERVAL_MINUTES * 60_000) {
-          recoveredAliases.push(alias);
-          continue;
-        }
-        await sleep(waitMs);
-        now = new Date();
+        recoveredAliases.push(alias);
+        continue;
       }
       if (handledFiveHourResets[alias] === resetValue) {
         continue;

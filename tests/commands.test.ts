@@ -534,6 +534,52 @@ describe("auto quota commands", () => {
     expect(await store.readQuota("user@example.com")).not.toBeNull();
   });
 
+  test("tick exits instead of holding the lock while waiting for a near future reset", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.writeQuota("user@example.com", makeQuota(80, nearFutureIso()));
+    await enableAutoQuota(context.appHome);
+
+    await Promise.race([
+      autoQuotaTickCommand(context),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("tick should not wait inside the lock")), 250)),
+    ]);
+
+    const autoState = await readAutoQuotaState(context.appHome);
+    expect(autoState.lastSuccessAliases).toEqual([]);
+  });
+
+  test("stop can run right after a tick that found a near future reset", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeCallFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.writeQuota("user@example.com", makeQuota(80, nearFutureIso()));
+    await enableAutoQuota(context.appHome);
+
+    await autoQuotaTickCommand(context);
+    await autoQuotaStopCommand(context, { uninstallLaunchAgent: false });
+
+    expect((await readAutoQuotaState(context.appHome)).enabled).toBe(false);
+    expect(output.text).toContain("自动刷新已停止");
+  });
+
   test("tick calls every due account regardless of remaining 5h quota", async () => {
     const context = await makeContext();
     context.codexBin = await writeCallFakeCodex(context.appHome);
@@ -856,6 +902,10 @@ function pastIso(): string {
 
 function futureIso(): string {
   return new Date(Date.now() + 60 * 60_000).toISOString();
+}
+
+function nearFutureIso(): string {
+  return new Date(Date.now() + 10_000).toISOString();
 }
 
 class CaptureStream extends Writable {
