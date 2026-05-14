@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import {
   AUTO_QUOTA_MAX_INTERVAL_MINUTES,
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
@@ -33,33 +35,104 @@ type UiStatus = {
   };
 };
 
-const DEFAULT_UI_PORT = 3789;
+const UI_APP_PORT = 41_739;
+const PORTLESS_PROXY_PORT = 1_355;
+const PORTLESS_NAME = "codexaccount";
+const UI_EVENT_INTERVAL_MS = 5_000;
 const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
 const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
 
 export async function uiCommand(
   context: CommandContext,
-  options: { port?: number } = {},
+  options: { serve?: boolean } = {},
 ): Promise<void> {
-  const port = options.port ?? DEFAULT_UI_PORT;
+  if (options.serve !== true) {
+    await runPortlessUi(context);
+    return;
+  }
+
   const app = new Hono();
   const cssPath = path.join(import.meta.dir, "web", "static", "alignui.css");
 
   app.get("/", async (c) => c.html(renderPage(await readStatus(context))));
   app.get("/api/status", async (c) => c.json(await readStatus(context)));
+  app.get("/api/events", (c) => streamSSE(c, async (stream) => {
+    let lastSignature = "";
+    while (!stream.aborted) {
+      const status = await readStatus(context);
+      const signature = JSON.stringify(status);
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        await stream.writeSSE({
+          event: "status",
+          data: JSON.stringify({ html: renderMain(status) }),
+        });
+      }
+      await stream.sleep(UI_EVENT_INTERVAL_MS);
+    }
+  }));
   app.get("/assets/alignui.css", async (c) => {
     const css = await readFile(cssPath, "utf8");
     return c.body(css, 200, { "content-type": "text/css; charset=utf-8" });
   });
+  app.get("/assets/motion.js", async (c) => {
+    const script = await readFile(
+      path.resolve(import.meta.dir, "..", "node_modules", "motion", "dist", "motion.js"),
+      "utf8",
+    );
+    return c.body(script, 200, { "content-type": "application/javascript; charset=utf-8" });
+  });
 
   Bun.serve({
     hostname: "127.0.0.1",
-    port,
+    port: UI_APP_PORT,
     fetch: app.fetch,
   });
 
-  context.stdout.write(`Web UI 已启动：http://127.0.0.1:${port}\n`);
+  context.stdout.write(`Web UI 内部服务已启动：http://127.0.0.1:${UI_APP_PORT}\n`);
   await new Promise(() => undefined);
+}
+
+async function runPortlessUi(context: CommandContext): Promise<void> {
+  const portlessBin = path.resolve(import.meta.dir, "..", "node_modules", ".bin", "portless");
+  const publicUrl = `http://${PORTLESS_NAME}.localhost:${PORTLESS_PROXY_PORT}`;
+  const child = spawn(
+    portlessBin,
+    [
+      PORTLESS_NAME,
+      "--app-port",
+      String(UI_APP_PORT),
+      "--",
+      process.execPath,
+      path.resolve(process.argv[1] ?? "src/main.ts"),
+      "ui",
+      "--serve",
+    ],
+    {
+      cwd: context.cwd,
+      env: {
+        ...process.env,
+        CXA_HOME: context.appHome,
+        CODEX_HOME: context.codexHome,
+        CXA_CODEX_BIN: context.codexBin,
+        PORTLESS_HTTPS: "0",
+        PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
+      },
+      stdio: "inherit",
+    },
+  );
+
+  context.stdout.write(`Web UI 已启动：${publicUrl}\n`);
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0 || signal === "SIGINT" || signal === "SIGTERM") {
+        resolve();
+        return;
+      }
+      reject(new Error(`portless 已退出：${signal ?? code}`));
+    });
+  });
 }
 
 async function readStatus(context: CommandContext): Promise<UiStatus> {
@@ -103,26 +176,62 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
 }
 
 function renderPage(status: UiStatus): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>codex account</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/assets/alignui.css" />
+    <script src="/assets/motion.js"></script>
+  </head>
+  <body class="min-h-screen bg-bg-weak-50 font-sans text-text-strong-950 antialiased">
+    ${renderMain(status)}
+    <script>
+      const animateQuotaBars = () => {
+        const motion = window.Motion;
+        if (!motion?.animate) return;
+        document.querySelectorAll('[data-quota-bar]').forEach((bar) => {
+          const width = bar.getAttribute('data-quota-width') ?? '0%';
+          motion.animate(bar, { width }, { duration: 0.75, easing: [0.16, 1, 0.3, 1] });
+        });
+      };
+      const connectStatusEvents = () => {
+        if (!window.EventSource) return;
+        const source = new EventSource('/api/events');
+        source.addEventListener('status', (event) => {
+          const payload = JSON.parse(event.data);
+          const root = document.querySelector('[data-status-root]');
+          if (!root || typeof payload.html !== 'string') return;
+          root.outerHTML = payload.html;
+          requestAnimationFrame(animateQuotaBars);
+        });
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          animateQuotaBars();
+          connectStatusEvents();
+        }, { once: true });
+      } else {
+        animateQuotaBars();
+        connectStatusEvents();
+      }
+    </script>
+  </body>
+</html>`;
+}
+
+function renderMain(status: UiStatus): string {
   const failures = Object.entries(status.quota.lastFailureByAlias);
   const nextRefresh = status.accounts
     .map((account) => account.nextRefreshAt)
     .filter((value): value is string => value !== null)
     .sort()[0] ?? null;
 
-  return `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>cxa quota</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <meta http-equiv="refresh" content="30" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/alignui.css" />
-  </head>
-  <body class="min-h-screen bg-bg-weak-50 font-sans text-text-strong-950 antialiased">
-    <main class="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px_420px] lg:p-6">
+  return `<main data-status-root class="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px_420px] lg:p-6">
       <section class="grid content-start gap-4">
         ${renderAccountsCard(status.accounts)}
       </section>
@@ -133,9 +242,7 @@ function renderPage(status: UiStatus): string {
         ${renderScheduleCard(status.accounts, nextRefresh)}
         ${renderFailuresCard(failures)}
       </section>
-    </main>
-  </body>
-</html>`;
+    </main>`;
 }
 
 function renderQuotaStatusCard(
@@ -273,7 +380,7 @@ function quotaBlock(label: string, percent: number | null, resetAt: string | nul
       <span class="text-label-sm ${tone.textClass}">${percent === null ? "unknown" : `${percent}%`}</span>
     </div>
     <div class="h-2 rounded-full bg-bg-weak-50">
-      <div class="h-2 rounded-full ${tone.barClass}" style="width:${Math.max(0, Math.min(100, value))}%"></div>
+      <div data-quota-bar data-quota-width="${Math.max(0, Math.min(100, value))}%" class="h-2 rounded-full ${tone.barClass}" style="width:0%"></div>
     </div>
     <div class="mt-2 text-paragraph-xs text-text-sub-600">reset: ${formatDateTime(resetAt)}</div>
   </div>`;

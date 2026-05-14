@@ -151,8 +151,7 @@ async function run(argv: string[]): Promise<number> {
       return 0;
     }
     case "ui": {
-      const port = parseUiPort(argv.slice(1));
-      await uiCommand(context, port === undefined ? {} : { port });
+      await uiCommand(context, parseUiOptions(argv.slice(1)));
       return 0;
     }
     default:
@@ -160,16 +159,12 @@ async function run(argv: string[]): Promise<number> {
   }
 }
 
-function parseUiPort(argv: string[]): number | undefined {
-  if (argv.length === 0) return undefined;
-  if (argv.length !== 2 || argv[0] !== "--port") {
-    throw new Error("ui 只支持 --port <port>。");
+function parseUiOptions(argv: string[]): { serve?: boolean } {
+  if (argv.length === 0) return {};
+  if (argv.length === 1 && argv[0] === "--serve") {
+    return { serve: true };
   }
-  const port = Number.parseInt(argv[1]!, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("port 必须是 1-65535 的整数。");
-  }
-  return port;
+  throw new Error("ui 不接收参数。");
 }
 
 run(process.argv.slice(2))
