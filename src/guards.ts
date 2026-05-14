@@ -79,6 +79,7 @@ export function isAutoQuotaState(value: unknown): value is AutoQuotaState {
     typeof value.enabled === 'boolean' &&
     isNumber(value.intervalMinutes) &&
     isNullableString(value.lastTickAt) &&
+    isNullableString(value.nextCheckAt) &&
     isNullableString(value.lastCallAt) &&
     isStringArray(value.lastSuccessAliases) &&
     isStringRecord(value.lastFailureByAlias) &&

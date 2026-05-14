@@ -4,7 +4,8 @@ import chalk from "chalk";
 import dayjs from "dayjs";
 import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
 import {
-  AUTO_QUOTA_INTERVAL_MINUTES,
+  AUTO_QUOTA_MAX_INTERVAL_MINUTES,
+  AUTO_QUOTA_MIN_INTERVAL_MINUTES,
   readAutoQuotaState,
   writeAutoQuotaState,
 } from "./auto-quota.ts";
@@ -18,15 +19,15 @@ import {
 } from "./codex.ts";
 import { launchCodexDesktop, quitCodexDesktop } from "./desktop.ts";
 import { pathExists, removePath } from "./fs.ts";
-import {
-  installAutoQuotaLaunchAgent,
-  isAutoQuotaLaunchAgentInstalled,
-  uninstallAutoQuotaLaunchAgent,
-} from "./launchd.ts";
 import { renderList } from "./format.ts";
 import { withLock } from "./lock.ts";
 import { runsRoot } from "./paths.ts";
 import { confirm, createSpinner, inputText, selectAlias, selectAliases } from "./prompt.ts";
+import {
+  isAutoQuotaServiceRunning,
+  startAutoQuotaService,
+  stopAutoQuotaService,
+} from "./service.ts";
 import { AccountStore, assertAlias } from "./store.ts";
 import type {
   AccountMeta,
@@ -50,10 +51,12 @@ const CALL_MESSAGES = [
   "咖啡",
   "天气",
 ];
-const AUTO_QUOTA_STAGGER_STEP_MINUTES = 7;
-const AUTO_QUOTA_STAGGER_MIN_GAP_MINUTES = 5;
+const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
+const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
 const QUOTA_REFRESH_MIN_DELAY_MS = 1_000;
 const QUOTA_REFRESH_MAX_DELAY_MS = 5_000;
+const AUTO_QUOTA_SERVICE_MIN_DELAY_MS = AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000;
+const AUTO_QUOTA_SERVICE_MAX_DELAY_MS = AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000;
 
 export async function saveCommand(
   context: CommandContext,
@@ -402,20 +405,28 @@ async function callAccount(
 export async function autoQuotaStartCommand(
   context: CommandContext,
   options: {
-    installLaunchAgent?: boolean;
+    startService?: boolean;
     scriptPath?: string;
     bunBin?: string;
   } = {},
 ): Promise<void> {
+  let startResult: { successes: string[]; failures: Record<string, string> } = {
+    successes: [],
+    failures: {},
+  };
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await readAutoQuotaState(context.appHome);
-    const startResult = await refreshAllQuotaForAutoStart(context, store);
+    startResult = await refreshAllQuotaForAutoStart(context, store);
+    const now = new Date();
     await writeAutoQuotaState(context.appHome, {
       ...state,
       enabled: true,
-      intervalMinutes: AUTO_QUOTA_INTERVAL_MINUTES,
-      lastTickAt: new Date().toISOString(),
+      intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
+      lastTickAt: now.toISOString(),
+      nextCheckAt: new Date(
+        now.getTime() + randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS),
+      ).toISOString(),
       lastFailureByAlias: startResult.failures,
       consecutiveFailureCountByAlias: mergeFailureCounts(
         state.consecutiveFailureCountByAlias,
@@ -424,33 +435,33 @@ export async function autoQuotaStartCommand(
       ),
       lastQuotaFetchAliases: startResult.successes,
     });
-
-    if (options.installLaunchAgent !== false) {
-      await installAutoQuotaLaunchAgent({
-        bunBin: options.bunBin ?? process.execPath,
-        scriptPath: options.scriptPath ?? path.resolve(process.argv[1] ?? "src/main.ts"),
-        cwd: context.cwd,
-        appHome: context.appHome,
-        codexHome: context.codexHome,
-        codexBin: context.codexBin,
-      });
-    }
-
-    context.stdout.write("自动刷新已开启。每 30 分钟检查一次。\n");
-    if (startResult.successes.length > 0) {
-      context.stdout.write("已刷新当前额度：\n");
-      for (const alias of startResult.successes) {
-        context.stdout.write(`  ${alias}\n`);
-      }
-    }
-    const failures = Object.entries(startResult.failures);
-    if (failures.length > 0) {
-      context.stdout.write("失败账号：\n");
-      for (const [alias, reason] of failures) {
-        context.stdout.write(`  ${alias}：${reason}\n`);
-      }
-    }
   });
+
+  if (options.startService !== false) {
+    await startAutoQuotaService({
+      bunBin: options.bunBin ?? process.execPath,
+      scriptPath: options.scriptPath ?? path.resolve(process.argv[1] ?? "src/main.ts"),
+      cwd: context.cwd,
+      appHome: context.appHome,
+      codexHome: context.codexHome,
+      codexBin: context.codexBin,
+    });
+  }
+
+  context.stdout.write("自动刷新已开启。每 5-6 分钟检查一次。\n");
+  if (startResult.successes.length > 0) {
+    context.stdout.write("已刷新当前额度：\n");
+    for (const alias of startResult.successes) {
+      context.stdout.write(`  ${alias}\n`);
+    }
+  }
+  const failures = Object.entries(startResult.failures);
+  if (failures.length > 0) {
+    context.stdout.write("失败账号：\n");
+    for (const [alias, reason] of failures) {
+      context.stdout.write(`  ${alias}：${reason}\n`);
+    }
+  }
 }
 
 async function refreshAllQuotaForAutoStart(
@@ -473,18 +484,18 @@ async function refreshAllQuotaForAutoStart(
 
 export async function autoQuotaStopCommand(
   context: CommandContext,
-  options: { uninstallLaunchAgent?: boolean } = {},
+  options: { stopService?: boolean } = {},
 ): Promise<void> {
   await withLock(context.appHome, async () => {
     const state = await readAutoQuotaState(context.appHome);
     await writeAutoQuotaState(context.appHome, {
       ...state,
       enabled: false,
-      intervalMinutes: AUTO_QUOTA_INTERVAL_MINUTES,
+      intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
     });
 
-    if (options.uninstallLaunchAgent !== false) {
-      await uninstallAutoQuotaLaunchAgent();
+    if (options.stopService !== false) {
+      await stopAutoQuotaService(context.appHome);
     }
 
     context.stdout.write("自动刷新已停止。\n");
@@ -494,9 +505,33 @@ export async function autoQuotaStopCommand(
 export async function autoQuotaStatusCommand(context: CommandContext): Promise<void> {
   const store = new AccountStore(context.appHome);
   const autoState = await readAutoQuotaState(context.appHome);
-  const installed = await isAutoQuotaLaunchAgentInstalled();
+  const serviceRunning = await isAutoQuotaServiceRunning(context.appHome);
   const summaries = await store.listSummaries();
-  context.stdout.write(`${renderAutoQuotaStatus(autoState, installed, summaries)}\n`);
+  context.stdout.write(`${renderAutoQuotaStatus(autoState, serviceRunning, summaries)}\n`);
+}
+
+export async function autoQuotaServiceCommand(context: CommandContext): Promise<void> {
+  const stop = (): never => {
+    process.exit(0);
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+
+  while (true) {
+    const state = await readAutoQuotaState(context.appHome);
+    if (!state.enabled) {
+      return;
+    }
+
+    await autoQuotaTickCommand(context);
+    const delay = randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS);
+    const nextCheckAt = new Date(Date.now() + delay).toISOString();
+    await writeAutoQuotaState(context.appHome, {
+      ...await readAutoQuotaState(context.appHome),
+      nextCheckAt,
+    });
+    await sleep(delay);
+  }
 }
 
 export async function autoQuotaTickCommand(context: CommandContext): Promise<void> {
@@ -540,6 +575,9 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
         failures[alias] = "缺少 5h 重置时间。";
         continue;
       }
+      if (handledFiveHourResets[alias] !== undefined && handledFiveHourResets[alias] !== reset) {
+        delete handledFiveHourResets[alias];
+      }
       quotaByAlias.set(alias, quota);
     }
 
@@ -582,13 +620,16 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       const refreshed = await refreshQuotaQuietly(context, store, alias);
       if (refreshed.quota === null) {
         failures[alias] = "已发送刷新请求，但读取新额度失败。";
+      } else if (refreshed.quota.fiveHour?.resetsAt !== resetValue) {
+        delete handledFiveHourResets[alias];
       }
     }
 
     await writeAutoQuotaState(context.appHome, {
       ...current,
-      intervalMinutes: AUTO_QUOTA_INTERVAL_MINUTES,
+      intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
       lastTickAt: now.toISOString(),
+      nextCheckAt: current.nextCheckAt,
       lastCallAt: successes.length > 0 ? now.toISOString() : current.lastCallAt,
       lastSuccessAliases: successes,
       lastFailureByAlias: failures,
@@ -850,7 +891,7 @@ function formatQuotaWarning(alias: string, error: string | null): string {
 
 function renderAutoQuotaStatus(
   state: AutoQuotaState,
-  launchAgentInstalled: boolean,
+  serviceRunning: boolean,
   summaries: AccountSummary[],
 ): string {
   if (!state.enabled) {
@@ -865,10 +906,11 @@ function renderAutoQuotaStatus(
 
   const lines = [
     `${chalk.bold("自动刷新：")}${chalk.green("已开启")}`,
-    `${chalk.bold("检查频率：")}每 ${state.intervalMinutes} 分钟`,
-    `${chalk.bold("后台任务：")}${launchAgentInstalled ? chalk.green("正常") : chalk.red("未安装")}`,
+    `${chalk.bold("检查频率：")}每 ${AUTO_QUOTA_MIN_INTERVAL_MINUTES}-${AUTO_QUOTA_MAX_INTERVAL_MINUTES} 分钟`,
+    `${chalk.bold("后台服务：")}${serviceRunning ? chalk.green("正常") : chalk.red("未运行")}`,
     "",
     `${chalk.bold("上次检查：")}${chalk.dim(formatFriendlyTime(state.lastTickAt))}`,
+    `${chalk.bold("下次检查：")}${chalk.dim(formatNextCheckTime(state))}`,
   ];
 
   if (state.lastCallAt !== null) {
@@ -933,9 +975,9 @@ function renderAutoQuotaStatus(
     }
   }
 
-  if (!launchAgentInstalled) {
+  if (!serviceRunning) {
     lines.push("");
-    lines.push(chalk.red("后台任务未安装。请重新开启："));
+    lines.push(chalk.red("后台服务未运行。请重新开启："));
     lines.push(`  ${chalk.cyan("bun cli quota --start")}`);
   } else if (failures.length === 0) {
     lines.push("");
@@ -972,37 +1014,16 @@ function buildAutoQuotaSchedule(
   for (const [reset, group] of groups.entries()) {
     const base = new Date(reset);
     if (Number.isNaN(base.getTime())) continue;
-    const ordered = [...group].sort(
-      (left, right) =>
-        stableHash(`${left.alias}:${reset}`) - stableHash(`${right.alias}:${reset}`),
-    );
-    for (const [index, item] of ordered.entries()) {
-      const offsetMinutes =
-        index * AUTO_QUOTA_STAGGER_STEP_MINUTES +
-        stableHash(`${item.alias}:${reset}:offset`) % AUTO_QUOTA_STAGGER_STEP_MINUTES;
-      schedule.set(item.alias, new Date(base.getTime() + offsetMinutes * 60_000));
+    for (const item of group) {
+      const offsetMs = stableRandomInt(
+        `${item.alias}:${reset}:offset`,
+        AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS,
+        AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS,
+      );
+      schedule.set(item.alias, new Date(base.getTime() + offsetMs));
     }
   }
-  return spreadSchedule(schedule);
-}
-
-function spreadSchedule(schedule: Map<string, Date>): Map<string, Date> {
-  const items = [...schedule.entries()].sort(
-    ([leftAlias, leftDate], [rightAlias, rightDate]) =>
-      leftDate.getTime() - rightDate.getTime() ||
-      stableHash(leftAlias) - stableHash(rightAlias),
-  );
-  const spread = new Map<string, Date>();
-  let previousTime: number | null = null;
-  for (const [alias, date] of items) {
-    const minTime = previousTime === null
-      ? date.getTime()
-      : previousTime + AUTO_QUOTA_STAGGER_MIN_GAP_MINUTES * 60_000;
-    const nextTime = Math.max(date.getTime(), minTime);
-    spread.set(alias, new Date(nextTime));
-    previousTime = nextTime;
-  }
-  return spread;
+  return schedule;
 }
 
 function stableHash(value: string): number {
@@ -1012,6 +1033,10 @@ function stableHash(value: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
+}
+
+function stableRandomInt(value: string, min: number, max: number): number {
+  return min + stableHash(value) % (max - min + 1);
 }
 
 function maxTextWidth(values: string[]): number {
@@ -1042,6 +1067,16 @@ function formatFriendlyTime(value: string | null): string {
   if (dayDelta === 1) return `明天 ${time}`;
   if (dayDelta === -1) return `昨天 ${time}`;
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`;
+}
+
+function formatNextCheckTime(state: AutoQuotaState): string {
+  if (state.nextCheckAt !== null) return formatFriendlyTime(state.nextCheckAt);
+  if (!state.enabled || state.lastTickAt === null) return "还没有记录";
+  const lastTickAt = parseDate(state.lastTickAt);
+  if (lastTickAt === null) return "还没有记录";
+  const min = new Date(lastTickAt.getTime() + AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000);
+  const max = new Date(lastTickAt.getTime() + AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000);
+  return `${formatFriendlyTime(min.toISOString())} - ${formatFriendlyTime(max.toISOString())}`;
 }
 
 function pad(value: number): string {

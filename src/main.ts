@@ -4,6 +4,7 @@ import {
   autoQuotaStartCommand,
   autoQuotaStatusCommand,
   autoQuotaStopCommand,
+  autoQuotaServiceCommand,
   autoQuotaTickCommand,
   callCommand,
   deactiveCommand,
@@ -18,6 +19,7 @@ import {
 import { resolveCodexBin } from "./codex.ts";
 import { renderError } from "./format.ts";
 import { resolveAppHome, resolveCodexHome } from "./paths.ts";
+import { uiCommand } from "./ui.ts";
 import type { CommandContext } from "./types.ts";
 
 function usage(): string {
@@ -38,6 +40,7 @@ function usage(): string {
     ["cxa quota --status", "查看自动刷新"],
     ["cxa refresh", "刷新账号 token"],
     ["cxa subscription", "更新订阅日期"],
+    ["cxa ui", "打开账号状态 Web UI"],
   ];
   const commandWidth = Math.max(...rows.map(([command]) => command.length));
   return [
@@ -123,6 +126,10 @@ async function run(argv: string[]): Promise<number> {
         await autoQuotaTickCommand(context);
         return 0;
       }
+      if (argv[1] === "--service") {
+        await autoQuotaServiceCommand(context);
+        return 0;
+      }
       if (argv[1] !== undefined && argv[1] !== "--select") {
         throw new Error("quota 只支持 --select、--start、--stop、--status。");
       }
@@ -143,9 +150,26 @@ async function run(argv: string[]): Promise<number> {
       await subscriptionCommand(context);
       return 0;
     }
+    case "ui": {
+      const port = parseUiPort(argv.slice(1));
+      await uiCommand(context, port === undefined ? {} : { port });
+      return 0;
+    }
     default:
       throw new Error(`未知命令：${command}\n${usage()}`);
   }
+}
+
+function parseUiPort(argv: string[]): number | undefined {
+  if (argv.length === 0) return undefined;
+  if (argv.length !== 2 || argv[0] !== "--port") {
+    throw new Error("ui 只支持 --port <port>。");
+  }
+  const port = Number.parseInt(argv[1]!, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("port 必须是 1-65535 的整数。");
+  }
+  return port;
 }
 
 run(process.argv.slice(2))

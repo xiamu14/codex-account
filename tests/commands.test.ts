@@ -465,6 +465,7 @@ describe("auto quota commands", () => {
         enabled: true,
         intervalMinutes: 30,
         lastTickAt: null,
+        nextCheckAt: null,
         lastCallAt: null,
         lastSuccessAliases: [],
         lastFailureByAlias: {},
@@ -497,7 +498,7 @@ describe("auto quota commands", () => {
       subscriptionExpiresAt: null,
     });
 
-    await autoQuotaStartCommand(context, { installLaunchAgent: false });
+    await autoQuotaStartCommand(context, { startService: false });
     expect((await readAutoQuotaState(context.appHome)).enabled).toBe(true);
     expect((await readAutoQuotaState(context.appHome)).lastQuotaFetchAliases).toEqual(["user@example.com"]);
     expect((await store.readQuota("user@example.com"))?.fiveHour?.percentLeft).toBe(74);
@@ -505,7 +506,7 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("已刷新当前额度");
     expect(output.text).toContain("user@example.com");
 
-    await autoQuotaStopCommand(context, { uninstallLaunchAgent: false });
+    await autoQuotaStopCommand(context, { stopService: false });
     expect((await readAutoQuotaState(context.appHome)).enabled).toBe(false);
     expect(output.text).toContain("自动刷新已停止");
   });
@@ -574,7 +575,7 @@ describe("auto quota commands", () => {
     await enableAutoQuota(context.appHome);
 
     await autoQuotaTickCommand(context);
-    await autoQuotaStopCommand(context, { uninstallLaunchAgent: false });
+    await autoQuotaStopCommand(context, { stopService: false });
 
     expect((await readAutoQuotaState(context.appHome)).enabled).toBe(false);
     expect(output.text).toContain("自动刷新已停止");
@@ -635,6 +636,7 @@ describe("auto quota commands", () => {
       enabled: true,
       intervalMinutes: 30,
       lastTickAt: new Date().toISOString(),
+      nextCheckAt: futureIso(),
       lastCallAt: new Date().toISOString(),
       lastSuccessAliases: ["work@example.com"],
       lastFailureByAlias: {
@@ -651,7 +653,8 @@ describe("auto quota commands", () => {
     await autoQuotaStatusCommand(context);
 
     expect(output.text).toContain("自动刷新：已开启");
-    expect(output.text).toContain("后台任务：");
+    expect(output.text).toContain("后台服务：");
+    expect(output.text).toContain("下次检查：");
     expect(output.text).toContain("已刷新：");
     expect(output.text).toContain("work@example.com");
     expect(output.text).toContain("失败账号：1 个");
@@ -870,6 +873,7 @@ async function enableAutoQuota(appHome: string): Promise<void> {
     enabled: true,
     intervalMinutes: 30,
     lastTickAt: null,
+    nextCheckAt: null,
     lastCallAt: null,
     lastSuccessAliases: [],
     lastFailureByAlias: {},

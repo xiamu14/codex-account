@@ -37,6 +37,10 @@ export function autoQuotaStatePath(appHome: string): string {
   return path.join(appHome, 'auto-quota.json');
 }
 
+export function autoQuotaPidPath(appHome: string): string {
+  return path.join(appHome, 'auto-quota.pid');
+}
+
 export function runsRoot(appHome: string): string {
   return path.join(appHome, 'runs');
 }

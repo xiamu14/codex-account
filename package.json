@@ -8,19 +8,30 @@
   },
   "scripts": {
     "cli": "bun run src/main.ts",
+    "build:ui-css": "tailwindcss -i src/web/globals.css -o src/web/static/alignui.css --minify",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run build:ui-css && bun run typecheck && bun test"
   },
   "devDependencies": {
+    "@alignui/cli": "^0.0.17",
+    "@tailwindcss/cli": "^4.3.0",
     "@types/node": "^24.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "bun-types": "^1.3.13",
+    "tailwindcss": "^4.3.0",
     "typescript": "^5.9.0"
   },
   "dependencies": {
     "@clack/core": "^1.3.0",
     "@clack/prompts": "^1.3.0",
+    "@remixicon/react": "^4.9.0",
     "chalk": "^5.6.2",
-    "dayjs": "^1.11.20"
+    "dayjs": "^1.11.20",
+    "hono": "^4.12.18",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   }
 }

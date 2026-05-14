@@ -3,15 +3,17 @@ import { isAutoQuotaState, isNumberRecord, isRecord, isString, isStringArray, is
 import { autoQuotaStatePath } from "./paths.ts";
 import type { AutoQuotaState } from "./types.ts";
 
-export const AUTO_QUOTA_INTERVAL_MINUTES = 30;
+export const AUTO_QUOTA_MIN_INTERVAL_MINUTES = 5;
+export const AUTO_QUOTA_MAX_INTERVAL_MINUTES = 6;
 
 export function createDefaultAutoQuotaState(): AutoQuotaState {
   const now = new Date().toISOString();
   return {
     version: 1,
     enabled: false,
-    intervalMinutes: AUTO_QUOTA_INTERVAL_MINUTES,
+    intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
     lastTickAt: null,
+    nextCheckAt: null,
     lastCallAt: null,
     lastSuccessAliases: [],
     lastFailureByAlias: {},
@@ -49,6 +51,7 @@ function migrateAutoQuotaState(value: unknown): AutoQuotaState | null {
   if (typeof value.enabled !== "boolean") return null;
   if (typeof value.intervalMinutes !== "number" || !Number.isFinite(value.intervalMinutes)) return null;
   if (value.lastTickAt !== null && !isString(value.lastTickAt)) return null;
+  if (value.nextCheckAt !== undefined && value.nextCheckAt !== null && !isString(value.nextCheckAt)) return null;
   if (value.lastCallAt !== null && !isString(value.lastCallAt)) return null;
   if (!isStringArray(value.lastSuccessAliases)) return null;
   if (!isStringRecord(value.lastFailureByAlias)) return null;
@@ -61,6 +64,7 @@ function migrateAutoQuotaState(value: unknown): AutoQuotaState | null {
     enabled: value.enabled,
     intervalMinutes: value.intervalMinutes,
     lastTickAt: value.lastTickAt,
+    nextCheckAt: value.nextCheckAt === undefined ? null : value.nextCheckAt,
     lastCallAt: value.lastCallAt,
     lastSuccessAliases: value.lastSuccessAliases,
     lastFailureByAlias: value.lastFailureByAlias,
