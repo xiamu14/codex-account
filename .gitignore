@@ -1,2 +1,4 @@
 node_modules
 dist
+src/web/dist/
+src/web/static/alignui.css

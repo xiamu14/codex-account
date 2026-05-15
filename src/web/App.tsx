@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { RiCheckboxCircleFill } from "@remixicon/react";
 import type { UiStatus } from "../ui-status.ts";
 import * as Badge from "./components/ui/badge.tsx";
 import * as Button from "./components/ui/button.tsx";
 import * as Divider from "./components/ui/divider.tsx";
 import * as ProgressBar from "./components/ui/progress-bar.tsx";
 import * as Select from "./components/ui/select.tsx";
+import * as StatusBadge from "./components/ui/status-badge.tsx";
 import { toast, Toaster } from "./components/ui/toast.tsx";
 import * as ToastAlert from "./components/ui/toast-alert.tsx";
 
@@ -14,6 +16,9 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; status: UiStatus }
   | { kind: "error"; message: string };
+
+const hiddenScrollListClass =
+  "grid max-h-56 gap-3 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -159,10 +164,10 @@ function Dashboard({
 
   return (
     <Shell>
-      <section className="grid content-start gap-4">
+      <section className="grid min-w-0 content-start gap-4">
         <AccountsCard accounts={status.accounts} />
       </section>
-      <section className="grid content-start gap-4">
+      <section className="grid min-w-0 content-start gap-4">
         <SwitchAccountCard
           accounts={status.accounts}
           isActivating={isActivatingAccount}
@@ -174,7 +179,7 @@ function Dashboard({
         />
         <QuotaResetCard accounts={status.accounts} />
       </section>
-      <section className="grid content-start gap-4">
+      <section className="grid min-w-0 content-start gap-4">
         <QuotaStatusCard quota={status.quota} />
         <FailuresCard
           failures={failures}
@@ -190,7 +195,7 @@ function Dashboard({
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto grid min-h-screen w-full grid-cols-1 gap-4 bg-bg-weak-50 p-8 lg:px-[100px]  font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_400px_420px]  ">
+    <main className="mx-auto grid min-h-screen w-full max-w-[1500px] grid-cols-1 gap-4 bg-bg-weak-50 p-6 font-sans text-text-strong-950 antialiased md:p-8 lg:grid-cols-[minmax(0,1.08fr)_minmax(280px,0.92fr)_minmax(260px,0.82fr)] xl:px-10 2xl:px-12">
       {children}
     </main>
   );
@@ -240,6 +245,7 @@ function QuotaRefreshCard({
   accounts: UiStatus["accounts"];
   nextQuotaFetchAt: string | null;
 }) {
+  const orderedAccounts = sortAccountsForDisplay(accounts);
   const refreshedCount = accounts.filter(
     (account) => account.lastQuotaFetchAt !== null,
   ).length;
@@ -256,8 +262,8 @@ function QuotaRefreshCard({
         <MetadataBadge color="blue" label={`${refreshedCount}`} />
       </div>
       <Divider.Root className="my-5" />
-      <div className="grid gap-3">
-        {accounts.map((account) => (
+      <div className={hiddenScrollListClass}>
+        {orderedAccounts.map((account) => (
           <AccountStatusRow
             key={account.alias}
             description={`下次刷新：${formatDateTime(nextQuotaFetchAt)}`}
@@ -276,6 +282,7 @@ function QuotaRefreshCard({
 }
 
 function QuotaResetCard({ accounts }: { accounts: UiStatus["accounts"] }) {
+  const orderedAccounts = sortAccountsForDisplay(accounts);
   const successCount = accounts.filter(
     (account) => account.lastCallStatus === "success",
   ).length;
@@ -292,8 +299,8 @@ function QuotaResetCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         <MetadataBadge color="purple" label={`${successCount}`} />
       </div>
       <Divider.Root className="my-5" />
-      <div className="grid gap-3">
-        {accounts.map((account) => (
+      <div className={hiddenScrollListClass}>
+        {orderedAccounts.map((account) => (
           <AccountResetRow account={account} key={account.alias} />
         ))}
       </div>
@@ -324,12 +331,38 @@ function AccountStatusRow({
           </div>
         </div>
         <div className="grid justify-items-end gap-1 text-right">
-          <MetadataBadge color={status.color} label={status.label} />
+          <AccountStatusBadge status={status} />
           <div className="text-label-xs text-text-strong-950">{value}</div>
         </div>
       </div>
     </div>
   );
+}
+
+function AccountStatusBadge({
+  status,
+}: {
+  status: { color: MetadataBadgeColor; label: string };
+}) {
+  if (status.label === "updated") {
+    return (
+      <StatusBadge.Root status="completed">
+        <StatusBadge.Icon as={RiCheckboxCircleFill} />
+        updated
+      </StatusBadge.Root>
+    );
+  }
+
+  if (status.label === "waiting") {
+    return (
+      <StatusBadge.Root status="pending" variant="light">
+        <StatusBadge.Dot />
+        waiting
+      </StatusBadge.Root>
+    );
+  }
+
+  return <MetadataBadge color={status.color} label={status.label} />;
 }
 
 function AccountResetRow({
@@ -368,7 +401,7 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
     <Card className="min-h-[560px]">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-label-xl text-text-strong-950">账号列表</div>
+          <div className="text-label-lg text-text-strong-950">账号列表</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
             本地账号、token 和额度缓存
           </div>
@@ -426,7 +459,7 @@ function SwitchAccountCard({
 
   return (
     <Card>
-      <div className="text-label-lg text-text-strong-950">激活账号</div>
+      <div className="text-label-lg text-text-strong-950">切换账号</div>
       <Divider.Root className="my-5" />
       <div className="flex items-center gap-3">
         <Select.Root
@@ -447,7 +480,7 @@ function SwitchAccountCard({
         </Select.Root>
         <Button.Root
           aria-busy={isActivating}
-          disabled={canActivate}
+          disabled={!canActivate}
           onClick={() => {
             if (!canActivate) return;
             void onActivate(selectedAlias);
@@ -455,10 +488,20 @@ function SwitchAccountCard({
           className={"w-[80px]"}
           mode="filled"
         >
+          {isActivating ? <LoadingSpinner /> : null}
           确定
         </Button.Root>
       </div>
     </Card>
+  );
+}
+
+function LoadingSpinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="size-4 animate-spin rounded-full border-2 border-static-white/35 border-t-static-white"
+    />
   );
 }
 

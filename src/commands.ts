@@ -75,7 +75,7 @@ export async function saveCommand(
     const store = new AccountStore(context.appHome);
     const liveAuth = path.join(context.codexHome, "auth.json");
     if (!(await hasCodexAuth(context.codexHome))) {
-      throw new Error("当前未登录。请先运行 cxa login。");
+      throw new Error("当前未登录。请先运行 bun cli login。");
     }
 
     const account = await readAcpAccount(
@@ -571,7 +571,8 @@ export async function autoQuotaServiceCommand(
   while (true) {
     const state = await readAutoQuotaState(context.appHome);
     if (!state.enabled) {
-      return;
+      await sleep(AUTO_QUOTA_SERVICE_MIN_DELAY_MS);
+      continue;
     }
 
     const nowBeforeTick = new Date();
@@ -1097,7 +1098,7 @@ function hasUsableWeeklyQuota(quota: AccountQuota): boolean {
 
 function formatQuotaWarning(alias: string, error: string | null): string {
   if (isTokenInvalidated(error)) {
-    return `${alias}: token 已失效。运行 cxa refresh ${alias}。`;
+    return `${alias}: token 已失效。运行 bun cli refresh ${alias}。`;
   }
   const firstLine = error
     ?.split(/\r?\n/)
@@ -1338,7 +1339,7 @@ function pickCallMessage(): string {
 function formatCallFailure(alias: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (isTokenInvalidated(message) || isAuthFailure(message)) {
-    return `token 已失效。运行 cxa refresh ${alias}。`;
+    return `token 已失效。运行 bun cli refresh ${alias}。`;
   }
   if (isQuotaFailure(message)) {
     return "没有可用额度。";

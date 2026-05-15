@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, copyFile, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { copyFileAtomic, pathExists, removePath } from "./fs.ts";
@@ -19,15 +20,19 @@ export async function resolveCodexBin(
 ): Promise<string> {
   const explicit = env.CXA_CODEX_BIN?.trim();
   if (explicit) return explicit;
-  try {
-    const { stdout } = await execFileAsync("which", ["codex"], {
-      env: { PATH: env.PATH ?? process.env.PATH },
-    });
-    const resolved = stdout.trim();
-    return resolved.length > 0 ? resolved : "codex";
-  } catch {
-    return "codex";
+
+  for (const entry of (env.PATH ?? process.env.PATH ?? "").split(":")) {
+    if (entry.trim().length === 0) continue;
+    const candidate = path.join(entry, "codex");
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Keep searching PATH entries.
+    }
   }
+
+  return "codex";
 }
 
 export async function runCodexLogin(
@@ -200,7 +205,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
     let loginStarted = false;
     const timeout = setTimeout(
       () => {
-        finish(() => reject(new Error("登录超时。请重新运行 cxa login。")));
+        finish(() => reject(new Error("登录超时。请重新运行 bun cli login。")));
       },
       15 * 60 * 1000,
     );

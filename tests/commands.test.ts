@@ -373,7 +373,7 @@ describe("quotaCommand", () => {
     await quotaCommand(context);
 
     expect(errorOutput.text).toContain(
-      "user@example.com: token 已失效。运行 cxa refresh user@example.com。",
+      "user@example.com: token 已失效。运行 bun cli refresh user@example.com。",
     );
   });
 
@@ -493,7 +493,7 @@ describe("callCommand", () => {
     expect(output.text).toContain("expired@example.com\n你：");
     expect(output.text).toContain("good@example.com\n回复：收到");
     expect(errorOutput.text).toContain("expired@example.com: token 已失效");
-    expect(errorOutput.text).toContain("cxa refresh expired@example.com");
+    expect(errorOutput.text).toContain("bun cli refresh expired@example.com");
   });
 
   test("reports quota failures for selected accounts", async () => {

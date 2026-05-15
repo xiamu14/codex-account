@@ -3,17 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "cxa": "./src/main.ts"
-  },
   "scripts": {
-    "cli": "bun run src/main.ts",
+    "cli": "bun ./src/main.ts",
     "build:ui-css": "tailwindcss -i src/web/globals.css -o src/web/static/alignui.css --minify",
     "build:ui": "bun run build:ui-css && vite build",
     "watch:ui-css": "tailwindcss -i src/web/globals.css -o src/web/static/alignui.css --watch",
-    "ui": "bun run src/main.ts ui",
+    "ui": "bun ./src/main.ts ui",
     "ui:dev": "bun run src/web/dev.ts",
-    "ui:serve": "bun run src/main.ts ui --serve",
+    "ui:serve": "bun ./src/main.ts ui --serve",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run build:ui && bun run typecheck && bun test"

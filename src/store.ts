@@ -100,7 +100,7 @@ export class AccountStore {
       throw new Error(`账号 ${alias} 不存在。`);
     }
     if (state.activeAccount === alias) {
-      throw new Error(`账号 ${alias} 正在使用。请先运行 cxa deactive。`);
+      throw new Error(`账号 ${alias} 正在使用。请先运行 bun cli deactive。`);
     }
     await removePath(accountHome(this.appHome, alias));
     state.accounts = state.accounts.filter((account) => account.alias !== alias);

@@ -16,39 +16,72 @@ import {
   saveCommand,
   subscriptionCommand,
 } from "./commands.ts";
+import chalk from "chalk";
 import { resolveCodexBin } from "./codex.ts";
 import { renderError } from "./format.ts";
+import {
+  installLaunchdServices,
+  renderServiceStartMessage,
+  startLaunchdServices,
+  stopLaunchdServices,
+  uninstallLaunchdServices,
+} from "./launchd.ts";
 import { resolveAppHome, resolveCodexHome } from "./paths.ts";
 import { uiCommand } from "./ui.ts";
 import type { CommandContext } from "./types.ts";
 
 function usage(): string {
-  const rows: Array<[command: string, description: string]> = [
-    ["bun cli --help", "查看帮助"],
-    ["cxa save", "保存当前账号"],
-    ["cxa login", "登录并保存账号"],
-    ["cxa list", "查看账号"],
-    ["cxa active", "激活账号"],
-    ["cxa deactive", "退出当前账号"],
-    ["cxa delete", "删除账号"],
-    ["cxa call", "刷新 quota 状态"],
-    ["cxa call --select", "选择账号刷新状态"],
-    ["cxa quota", "刷新额度"],
-    ["cxa quota --select", "选择账号刷新额度"],
-    ["cxa quota --start", "开启自动刷新"],
-    ["cxa quota --stop", "停止自动刷新"],
-    ["cxa quota --status", "查看自动刷新"],
-    ["cxa refresh", "刷新账号 token"],
-    ["cxa subscription", "更新订阅日期"],
-    ["cxa ui", "打开账号状态 Web UI"],
+  const groups: Array<{
+    title: string;
+    rows: Array<[command: string, description: string]>;
+  }> = [
+    {
+      title: "基础",
+      rows: [["bun cli --help", "查看帮助"]],
+    },
+    {
+      title: "Web UI 与定时任务",
+      rows: [
+        ["bun cli install", "安装 Web UI 与定时任务"],
+        ["bun cli uninstall", "卸载 Web UI 与定时任务"],
+        ["bun cli start", "启动 Web UI 与定时任务"],
+        ["bun cli stop", "停止 Web UI 与定时任务"],
+      ],
+    },
+    {
+      title: "账号",
+      rows: [
+        ["bun cli save", "保存当前账号"],
+        ["bun cli login", "登录并保存账号"],
+        ["bun cli deactive", "退出当前账号"],
+        ["bun cli delete", "删除账号"],
+        ["bun cli refresh", "刷新账号 token"],
+        ["bun cli subscription", "更新订阅到期时间"],
+      ],
+    },
+    {
+      title: "额度",
+      rows: [
+        ["bun cli call", "刷新 quota 状态"],
+        ["bun cli call --select", "选择账号刷新状态"],
+        ["bun cli quota", "刷新额度"],
+        ["bun cli quota --select", "选择账号刷新额度"],
+        ["bun cli quota --stop", "停止自动刷新"],
+      ],
+    },
   ];
+  const rows = groups.flatMap((group) => group.rows);
   const commandWidth = Math.max(...rows.map(([command]) => command.length));
-  return [
-    "用法:",
-    ...rows.map(([command, description]) => {
-      return `  ${command.padEnd(commandWidth)}  ${description}`;
-    }),
-  ].join("\n");
+  const lines = [chalk.bold("用法:")];
+  for (const group of groups) {
+    lines.push("", chalk.blue(`${group.title}:`));
+    for (const [command, description] of group.rows) {
+      lines.push(
+        `  ${chalk.cyan(command.padEnd(commandWidth))}  ${chalk.gray(description)}`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 async function buildContext(): Promise<CommandContext> {
@@ -70,9 +103,43 @@ async function run(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const context = await buildContext();
   switch (command) {
+    case "install":
+      if (argv[1] !== undefined) {
+        throw new Error("install 不需要参数。");
+      }
+      {
+        const context = await buildContext();
+        await installLaunchdServices(context);
+      }
+      process.stdout.write("后台服务已安装。\n运行 bun cli start 启动服务。\n");
+      return 0;
+    case "uninstall":
+      if (argv[1] !== undefined) {
+        throw new Error("uninstall 不需要参数。");
+      }
+      await uninstallLaunchdServices();
+      process.stdout.write("后台服务已卸载。\n");
+      return 0;
+    case "start":
+      if (argv[1] !== undefined) {
+        throw new Error("start 不需要参数。");
+      }
+      {
+        const context = await buildContext();
+        await startLaunchdServices(context);
+      }
+      process.stdout.write(`${renderServiceStartMessage(usage())}\n`);
+      return 0;
+    case "stop":
+      if (argv[1] !== undefined) {
+        throw new Error("stop 不需要参数。");
+      }
+      await stopLaunchdServices();
+      process.stdout.write("后台服务已停止。\n");
+      return 0;
     case "save": {
+      const context = await buildContext();
       if (argv[1] !== undefined) {
         throw new Error("save 不需要参数。");
       }
@@ -80,68 +147,88 @@ async function run(argv: string[]): Promise<number> {
       return 0;
     }
 
-    case "login":
+    case "login": {
+      const context = await buildContext();
       if (argv[1] !== undefined) {
         throw new Error("login 不需要参数。");
       }
       await loginCommand(context);
       return 0;
-    case "list":
+    }
+    case "list": {
+      const context = await buildContext();
       await listCommand(context);
       return 0;
-    case "active":
+    }
+    case "active": {
+      const context = await buildContext();
       await activeCommand(context, argv[1]);
       return 0;
-    case "deactive":
+    }
+    case "deactive": {
+      const context = await buildContext();
       await deactiveCommand(context);
       return 0;
-    case "delete":
+    }
+    case "delete": {
+      const context = await buildContext();
       await deleteCommand(context, argv[1]);
       return 0;
+    }
     case "call":
       if (argv[1] !== undefined && argv[1] !== "--select") {
         throw new Error("call 只支持 --select。");
       }
       if (argv[2] !== undefined)
         throw new Error("call 只支持一个参数。");
-      await callCommand(context, { select: argv[1] === "--select" });
+      {
+        const context = await buildContext();
+        await callCommand(context, { select: argv[1] === "--select" });
+      }
       return 0;
     case "quota":
       if (argv[2] !== undefined) {
         throw new Error("quota 只支持一个参数。");
       }
-      if (argv[1] === "--start") {
-        await autoQuotaStartCommand(context);
-        return 0;
+      {
+        const context = await buildContext();
+        if (argv[1] === "--start") {
+          await autoQuotaStartCommand(context);
+          return 0;
+        }
+        if (argv[1] === "--stop") {
+          await autoQuotaStopCommand(context);
+          return 0;
+        }
+        if (argv[1] === "--status") {
+          await autoQuotaStatusCommand(context);
+          return 0;
+        }
+        if (argv[1] === "--tick") {
+          await autoQuotaTickCommand(context);
+          return 0;
+        }
+        if (argv[1] === "--service") {
+          await autoQuotaServiceCommand(context);
+          return 0;
+        }
+        if (argv[1] !== undefined && argv[1] !== "--select") {
+          throw new Error("quota 只支持 --select、--start、--stop、--status。");
+        }
+        await quotaCommand(context, { select: argv[1] === "--select" });
       }
-      if (argv[1] === "--stop") {
-        await autoQuotaStopCommand(context);
-        return 0;
-      }
-      if (argv[1] === "--status") {
-        await autoQuotaStatusCommand(context);
-        return 0;
-      }
-      if (argv[1] === "--tick") {
-        await autoQuotaTickCommand(context);
-        return 0;
-      }
-      if (argv[1] === "--service") {
-        await autoQuotaServiceCommand(context);
-        return 0;
-      }
-      if (argv[1] !== undefined && argv[1] !== "--select") {
-        throw new Error("quota 只支持 --select、--start、--stop、--status。");
-      }
-      await quotaCommand(context, { select: argv[1] === "--select" });
       return 0;
     case "refresh":
       if (argv[2] !== undefined)
         throw new Error("refresh 最多接收一个账号。");
-      await refreshCommand(context, argv[1]);
+      {
+        const context = await buildContext();
+        await refreshCommand(context, argv[1]);
+      }
       return 0;
 
     case "subscription": {
+      const context = await buildContext();
       if (argv[1] !== undefined) {
         throw new Error(
           "subscription 不需要参数。",
@@ -151,6 +238,7 @@ async function run(argv: string[]): Promise<number> {
       return 0;
     }
     case "ui": {
+      const context = await buildContext();
       await uiCommand(context, parseUiOptions(argv.slice(1)));
       return 0;
     }

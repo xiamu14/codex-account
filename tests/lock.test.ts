@@ -39,7 +39,7 @@ describe("withLock", () => {
     await writeFile(path.join(target, "owner"), `${process.pid}\n2026-05-12T00:00:00.000Z\n`, "utf8");
 
     await expect(withLock(appHome, async () => undefined)).rejects.toThrow(
-      "另一个 cxa 操作正在运行",
+      "另一个 bun cli 操作正在运行",
     );
   });
 
@@ -52,7 +52,7 @@ describe("withLock", () => {
     await utimes(target, old, old);
 
     await expect(withLock(appHome, async () => undefined)).rejects.toThrow(
-      "另一个 cxa 操作正在运行",
+      "另一个 bun cli 操作正在运行",
     );
   });
 });
