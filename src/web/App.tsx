@@ -4,6 +4,7 @@ import * as Badge from "./components/ui/badge.tsx";
 import * as Button from "./components/ui/button.tsx";
 import * as Divider from "./components/ui/divider.tsx";
 import * as ProgressBar from "./components/ui/progress-bar.tsx";
+import * as Select from "./components/ui/select.tsx";
 import { toast, Toaster } from "./components/ui/toast.tsx";
 import * as ToastAlert from "./components/ui/toast-alert.tsx";
 
@@ -16,6 +17,7 @@ type LoadState =
 
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [isActivatingAccount, setIsActivatingAccount] = useState(false);
   const [isRetryingQuota, setIsRetryingQuota] = useState(false);
 
   useEffect(() => {
@@ -73,7 +75,38 @@ export function App() {
   }
   return (
     <Dashboard
+      isActivatingAccount={isActivatingAccount}
       isRetryingQuota={isRetryingQuota}
+      onActivateAccount={async (alias) => {
+        setIsActivatingAccount(true);
+        try {
+          const status = await activateAccount(alias);
+          setState({ kind: "ready", status });
+          toast.custom(
+            (t) => (
+              <ToastAlert.Root
+                message={`账号 ${alias} 已激活`}
+                status="success"
+                t={t}
+              />
+            ),
+            { duration: 4_000 },
+          );
+        } catch (error) {
+          toast.custom(
+            (t) => (
+              <ToastAlert.Root
+                message={errorMessage(error)}
+                status="error"
+                t={t}
+              />
+            ),
+            { duration: 5_000 },
+          );
+        } finally {
+          setIsActivatingAccount(false);
+        }
+      }}
       onRetryQuota={async () => {
         setIsRetryingQuota(true);
         try {
@@ -110,11 +143,15 @@ export function App() {
 }
 
 function Dashboard({
+  isActivatingAccount,
   isRetryingQuota,
+  onActivateAccount,
   onRetryQuota,
   status,
 }: {
+  isActivatingAccount: boolean;
   isRetryingQuota: boolean;
+  onActivateAccount: (alias: string) => Promise<void>;
   onRetryQuota: () => Promise<void>;
   status: UiStatus;
 }) {
@@ -126,6 +163,11 @@ function Dashboard({
         <AccountsCard accounts={status.accounts} />
       </section>
       <section className="grid content-start gap-4">
+        <SwitchAccountCard
+          accounts={status.accounts}
+          isActivating={isActivatingAccount}
+          onActivate={onActivateAccount}
+        />
         <QuotaRefreshCard
           accounts={status.accounts}
           nextQuotaFetchAt={status.quota.nextCheckAt}
@@ -333,7 +375,7 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
     <Card className="min-h-[560px]">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-label-xl text-text-strong-950">账号 List</div>
+          <div className="text-label-xl text-text-strong-950">账号列表</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
             本地账号、token 和额度缓存
           </div>
@@ -359,6 +401,69 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
             )}
           </div>
         )}
+      </div>
+    </Card>
+  );
+}
+
+function SwitchAccountCard({
+  accounts,
+  isActivating,
+  onActivate,
+}: {
+  accounts: UiStatus["accounts"];
+  isActivating: boolean;
+  onActivate: (alias: string) => Promise<void>;
+}) {
+  const activeAlias =
+    accounts.find((account) => account.isActive)?.alias ??
+    accounts[0]?.alias ??
+    "";
+  const inactiveAccounts = accounts.filter(
+    (account) => account.alias !== activeAlias,
+  );
+  const firstInactiveAlias = inactiveAccounts[0]?.alias ?? "";
+  const [selectedAlias, setSelectedAlias] = useState(firstInactiveAlias);
+
+  useEffect(() => {
+    setSelectedAlias(firstInactiveAlias);
+  }, [firstInactiveAlias]);
+
+  const canActivate = selectedAlias.trim().length > 0 && !isActivating;
+
+  return (
+    <Card>
+      <div className="text-label-lg text-text-strong-950">激活账号</div>
+      <Divider.Root className="my-5" />
+      <div className="flex items-center gap-3">
+        <Select.Root
+          disabled={inactiveAccounts.length === 0 || isActivating}
+          onValueChange={setSelectedAlias}
+          value={selectedAlias}
+        >
+          <Select.Trigger className="flex-1">
+            <Select.Value placeholder="暂无可切换账号" />
+          </Select.Trigger>
+          <Select.Content>
+            {inactiveAccounts.map((account) => (
+              <Select.Item key={account.alias} value={account.alias}>
+                {account.alias}
+              </Select.Item>
+            ))}
+          </Select.Content>
+        </Select.Root>
+        <Button.Root
+          aria-busy={isActivating}
+          disabled={canActivate}
+          onClick={() => {
+            if (!canActivate) return;
+            void onActivate(selectedAlias);
+          }}
+          className={"w-[80px]"}
+          mode="filled"
+        >
+          确定
+        </Button.Root>
       </div>
     </Card>
   );
@@ -492,10 +597,7 @@ function FailuresCard({
         <>
           <div className="grid gap-3">
             {failures.map(([alias, reason]) => (
-              <div
-                className="flex items-start gap-3 rounded-10 border border-stroke-soft-200 bg-bg-white-0 px-1 py-2"
-                key={alias}
-              >
+              <div className="flex items-start gap-3 px-1 py-2" key={alias}>
                 <span
                   aria-hidden="true"
                   className="mt-1.5 size-1.5 shrink-0 rounded-full bg-error-base"
@@ -513,7 +615,7 @@ function FailuresCard({
               </div>
             ))}
           </div>
-          <Divider.Root className="my-5" />
+          <div className="my-5 border-t border-dashed border-stroke-soft-200" />
           <Button.Root
             aria-busy={isRetrying}
             className="w-full"
@@ -539,7 +641,7 @@ function EmptyStateImage() {
     <div className="flex justify-center py-1.5">
       <img
         alt=""
-        className="h-[60px] w-auto"
+        className="h-[80px] w-auto"
         src="/assets/undraw_searching-everywhere_tffi.svg"
       />
     </div>
@@ -713,6 +815,19 @@ async function retryQuota(): Promise<UiStatus> {
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message.trim() || `重试失败：${response.status}`);
+  }
+  return (await response.json()) as UiStatus;
+}
+
+async function activateAccount(alias: string): Promise<UiStatus> {
+  const response = await fetch("/api/accounts/active", {
+    body: JSON.stringify({ alias }),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message.trim() || `切换失败：${response.status}`);
   }
   return (await response.json()) as UiStatus;
 }

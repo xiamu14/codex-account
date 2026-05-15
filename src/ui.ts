@@ -8,7 +8,7 @@ import {
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
   readAutoQuotaState,
 } from "./auto-quota.ts";
-import { quotaCommand } from "./commands.ts";
+import { activeCommand, quotaCommand } from "./commands.ts";
 import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
 import { AccountStore } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
@@ -38,6 +38,18 @@ export async function uiCommand(
 
   app.get("/", async (c) => c.html(await readIndexHtml(indexPath)));
   app.get("/api/status", async (c) => c.json(await readStatus(context)));
+  app.post("/api/accounts/active", async (c) => {
+    try {
+      const body = (await c.req.json()) as { alias?: unknown };
+      if (typeof body.alias !== "string" || body.alias.trim().length === 0) {
+        return c.text("请选择账号。", 400);
+      }
+      await activeCommand(context, body.alias);
+      return c.json(await readStatus(context));
+    } catch (error) {
+      return c.text(error instanceof Error ? error.message : String(error), 500);
+    }
+  });
   app.post("/api/quota/retry", async (c) => {
     try {
       await quotaCommand(context);

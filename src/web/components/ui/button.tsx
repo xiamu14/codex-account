@@ -15,7 +15,7 @@ export const buttonVariants = tv({
       "group/button inline-flex items-center justify-center whitespace-nowrap rounded-10 outline-none",
       "transition duration-200 ease-out",
       "focus:outline-none",
-      "disabled:pointer-events-none disabled:bg-bg-white-0 disabled:text-text-disabled-300 disabled:shadow-none",
+      "disabled:pointer-events-none disabled:bg-bg-weak-50 disabled:text-text-disabled-300 disabled:shadow-none",
     ],
     icon: "shrink-0 text-inherit",
   },
