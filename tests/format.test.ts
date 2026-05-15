@@ -56,6 +56,25 @@ describe('renderList', () => {
     expect(rendered).toContain('unknown');
   });
 
+  test('shows free plan when account is not subscribed', () => {
+    const rendered = renderList([{
+      alias: 'same@example.com',
+      isActive: false,
+      hasAuth: true,
+      meta: {
+        alias: 'same@example.com',
+        email: 'same@example.com',
+        planType: null,
+        subscriptionExpiresAt: null,
+        createdAt: '2026-05-11T00:00:00.000Z',
+        updatedAt: '2026-05-11T00:00:00.000Z'
+      },
+      quota: null
+    }]);
+
+    expect(rendered).toContain('plan          free');
+  });
+
   test('shows subscription row when an expiry date is available', () => {
     const rendered = renderList([{
       alias: 'same@example.com',

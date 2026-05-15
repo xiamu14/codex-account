@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathExists, removePath } from "./fs.ts";
 import { autoQuotaPidPath } from "./paths.ts";
+import type { AutoQuotaState, CommandContext } from "./types.ts";
 
 export async function startAutoQuotaService(options: {
   bunBin: string;
@@ -53,6 +54,36 @@ export async function stopAutoQuotaService(appHome: string): Promise<boolean> {
 export async function isAutoQuotaServiceRunning(appHome: string): Promise<boolean> {
   const pid = await readAutoQuotaPid(appHome);
   return pid !== null && isProcessRunning(pid);
+}
+
+export async function recoverAutoQuotaServiceIfNeeded(
+  context: CommandContext,
+  state: AutoQuotaState,
+): Promise<{ serviceRunning: boolean; recovered: boolean }> {
+  if (!state.enabled) {
+    return {
+      serviceRunning: await isAutoQuotaServiceRunning(context.appHome),
+      recovered: false,
+    };
+  }
+
+  if (await isAutoQuotaServiceRunning(context.appHome)) {
+    return { serviceRunning: true, recovered: false };
+  }
+
+  await startAutoQuotaService({
+    bunBin: process.execPath,
+    scriptPath: path.resolve(process.argv[1] ?? "src/main.ts"),
+    cwd: context.cwd,
+    appHome: context.appHome,
+    codexHome: context.codexHome,
+    codexBin: context.codexBin,
+  });
+
+  return {
+    serviceRunning: await isAutoQuotaServiceRunning(context.appHome),
+    recovered: true,
+  };
 }
 
 async function readAutoQuotaPid(appHome: string): Promise<number | null> {

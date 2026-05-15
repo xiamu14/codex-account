@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { UiStatus } from "../ui-status.ts";
+import * as Badge from "./components/ui/badge.tsx";
+import * as Divider from "./components/ui/divider.tsx";
+import * as ProgressBar from "./components/ui/progress-bar.tsx";
+import { toast, Toaster } from "./components/ui/toast.tsx";
+import * as ToastAlert from "./components/ui/toast-alert.tsx";
 
-type BadgeColor = "blue" | "gray" | "green" | "purple" | "red";
+type MetadataBadgeColor = "blue" | "gray" | "green" | "purple" | "red";
 
 type LoadState =
   | { kind: "loading" }
@@ -49,24 +54,24 @@ export function App() {
   }, []);
 
   if (state.kind === "loading") {
-    return <Shell><EmptyPanel text="正在读取账号状态" /></Shell>;
+    return (
+      <Shell>
+        <EmptyPanel text="正在读取账号状态" />
+      </Shell>
+    );
   }
   if (state.kind === "error") {
-    return <Shell><EmptyPanel text={state.message} /></Shell>;
+    return (
+      <Shell>
+        <EmptyPanel text={state.message} />
+      </Shell>
+    );
   }
   return <Dashboard status={state.status} />;
 }
 
 function Dashboard({ status }: { status: UiStatus }) {
   const failures = Object.entries(status.quota.lastFailureByAlias);
-  const nextRefresh = useMemo(
-    () =>
-      status.accounts
-        .map((account) => account.nextRefreshAt)
-        .filter((value): value is string => value !== null)
-        .sort()[0] ?? null,
-    [status.accounts],
-  );
 
   return (
     <Shell>
@@ -74,54 +79,192 @@ function Dashboard({ status }: { status: UiStatus }) {
         <AccountsCard accounts={status.accounts} />
       </section>
       <section className="grid content-start gap-4">
-        <QuotaStatusCard quota={status.quota} failures={failures} />
+        <QuotaStatusCard quota={status.quota} />
+        <QuotaRefreshCard accounts={status.accounts} />
+        <QuotaResetCard accounts={status.accounts} />
       </section>
       <section className="grid content-start gap-4">
-        <ScheduleCard accounts={status.accounts} nextRefresh={nextRefresh} />
         <FailuresCard failures={failures} />
       </section>
+      <QuotaToasts quota={status.quota} />
+      <Toaster />
     </Shell>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-1 gap-4 bg-bg-weak-50 p-4 font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_360px_420px] lg:p-6">
+    <main className="mx-auto grid min-h-screen w-full grid-cols-1 gap-4 bg-bg-weak-50 py-8 px-[160px] font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_360px_420px]  ">
       {children}
     </main>
   );
 }
 
-function QuotaStatusCard({
-  quota,
-  failures,
-}: {
-  quota: UiStatus["quota"];
-  failures: Array<[string, string]>;
-}) {
+function QuotaStatusCard({ quota }: { quota: UiStatus["quota"] }) {
   return (
     <Card>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-label-lg text-text-strong-950">Quota Status</div>
+          <div className="text-label-lg text-text-strong-950">定时任务</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            {quota.enabled ? "自动刷新已开启" : "自动刷新未开启"}
+            自动任务和检查节奏
           </div>
         </div>
-        <Badge
-          color={quota.serviceRunning ? "green" : "red"}
-          label={quota.serviceRunning ? "service online" : "service off"}
+        <MetadataBadge
+          color={serviceBadgeColor(quota)}
+          label={serviceBadgeLabel(quota)}
         />
       </div>
-      <Divider />
+      <Divider.Root className="my-5" />
       <div className="grid gap-3">
-        <StatusRow label="上次检查" value={formatDateTime(quota.lastTickAt)} />
-        <StatusRow label="下次检查" value={formatDateTime(quota.nextCheckAt)} />
-        <StatusRow label="上次额度刷新" value={formatDateTime(quota.lastQuotaFetchAt)} />
-        <StatusRow label="上次触发重置" value={formatDateTime(quota.lastCallAt)} />
-        <StatusRow label="失败账号" value={`${failures.length}`} />
+        <StatusDetailRow
+          description="后台服务每次醒来都会检查账号 quota 和 5h reset 时间。"
+          label="运行间隔"
+          value={quota.checkIntervalText}
+        />
+        <StatusDetailRow
+          description="最近一次自动任务完成检查的时间。"
+          label="上次检查"
+          value={formatDateTime(quota.lastTickAt)}
+        />
+        <StatusDetailRow
+          description="后台服务下一次计划开始检查的时间。"
+          label="下次检查"
+          value={formatDateTime(quota.nextCheckAt)}
+        />
       </div>
     </Card>
+  );
+}
+
+function QuotaRefreshCard({ accounts }: { accounts: UiStatus["accounts"] }) {
+  const refreshedCount = accounts.filter(
+    (account) => account.lastQuotaFetchAt !== null,
+  ).length;
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-label-lg text-text-strong-950">额度刷新</div>
+          <div className="mt-1 text-paragraph-sm text-text-sub-600">
+            按账号显示 quota 更新时间和下次刷新时间
+          </div>
+        </div>
+        <MetadataBadge color="blue" label={`${refreshedCount}`} />
+      </div>
+      <Divider.Root className="my-5" />
+      <div className="grid gap-3">
+        {accounts.map((account) => (
+          <AccountStatusRow
+            key={account.alias}
+            description={`下次刷新：${formatDateTime(account.nextRefreshAt)}`}
+            label={account.alias}
+            status={
+              account.lastQuotaFetchAt === null
+                ? { color: "gray", label: "waiting" }
+                : { color: "green", label: "updated" }
+            }
+            value={formatDateTime(account.lastQuotaFetchAt)}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function QuotaResetCard({ accounts }: { accounts: UiStatus["accounts"] }) {
+  const successCount = accounts.filter(
+    (account) => account.lastCallStatus === "success",
+  ).length;
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-label-lg text-text-strong-950">额度重置</div>
+          <div className="mt-1 text-paragraph-sm text-text-sub-600">
+            按账号显示 call 触发状态
+          </div>
+        </div>
+        <MetadataBadge color="purple" label={`${successCount}`} />
+      </div>
+      <Divider.Root className="my-5" />
+      <div className="grid gap-3">
+        {accounts.map((account) => (
+          <AccountResetRow account={account} key={account.alias} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function AccountStatusRow({
+  description,
+  label,
+  status,
+  value,
+}: {
+  description: string;
+  label: string;
+  status: { color: MetadataBadgeColor; label: string };
+  value: string;
+}) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="truncate text-label-sm text-text-strong-950">
+            {label}
+          </div>
+          <div className="mt-1 text-paragraph-xs text-text-sub-600">
+            {description}
+          </div>
+        </div>
+        <div className="grid justify-items-end gap-1 text-right">
+          <MetadataBadge color={status.color} label={status.label} />
+          <div className="text-label-xs text-text-strong-950">{value}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccountResetRow({
+  account,
+}: {
+  account: UiStatus["accounts"][number];
+}) {
+  const plan = formatPlan(account.planType);
+  if (plan === "free") {
+    return (
+      <AccountStatusRow
+        description="free plan 不加入自动 call 重置额度。"
+        label={account.alias}
+        status={{ color: "gray", label: "free" }}
+        value="跳过"
+      />
+    );
+  }
+
+  if (account.lastCallStatus === "success") {
+    return (
+      <AccountStatusRow
+        description="最近一轮已成功触发 reset call。"
+        label={account.alias}
+        status={{ color: "green", label: "success" }}
+        value={formatDateTime(account.lastCallAt)}
+      />
+    );
+  }
+
+  return (
+    <AccountStatusRow
+      description={`等待下次额度刷新窗口：${formatDateTime(account.nextRefreshAt)}`}
+      label={account.alias}
+      status={{ color: "gray", label: "waiting" }}
+      value="暂无"
+    />
   );
 }
 
@@ -135,9 +278,9 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
             本地账号、token 和额度缓存
           </div>
         </div>
-        <Badge color="blue" label={`${accounts.length} accounts`} />
+        <MetadataBadge color="blue" label={`${accounts.length} accounts`} />
       </div>
-      <Divider />
+      <Divider.Root className="my-5" />
       <div className="max-h-100 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-stone-300 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-stone-100">
         {accounts.length === 0 ? (
           <div className="rounded-20 border border-dashed border-stroke-soft-200 p-8 text-center text-paragraph-sm text-text-sub-600">
@@ -165,7 +308,7 @@ function AccountRow({
   isLast: boolean;
 }) {
   const fiveHour = account.quota?.fiveHour?.percentLeft ?? null;
-  const weekly = account.quota?.weekly?.percentLeft ?? null;
+  const weeklyQuota = account.quota?.weekly ?? null;
 
   return (
     <>
@@ -173,75 +316,46 @@ function AccountRow({
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <div className="truncate text-label-md text-text-strong-950">{account.alias}</div>
-              {account.isActive ? <Badge color="green" label="active" /> : null}
+              <div className="truncate text-label-md text-text-strong-950">
+                {account.alias}
+              </div>
+              {account.isActive ? (
+                <MetadataBadge color="green" label="active" />
+              ) : null}
             </div>
           </div>
-          <Badge
-            color={account.hasAuth ? "blue" : "red"}
-            label={account.hasAuth ? "token" : "no token"}
-          />
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div
+          className={`mt-4 grid gap-3 ${weeklyQuota !== null ? "md:grid-cols-2" : ""}`}
+        >
           <QuotaBlock
             label="5h limit"
             percent={fiveHour}
             resetAt={account.quota?.fiveHour?.resetsAt ?? null}
           />
-          <QuotaBlock
-            label="weekly"
-            percent={weekly}
-            resetAt={account.quota?.weekly?.resetsAt ?? null}
-          />
+          {weeklyQuota !== null ? (
+            <QuotaBlock
+              label="weekly"
+              percent={weeklyQuota.percentLeft}
+              resetAt={weeklyQuota.resetsAt}
+            />
+          ) : null}
         </div>
         <div className="mt-4 grid gap-2 text-paragraph-xs text-text-sub-600 sm:grid-cols-3">
-          <span>plan: {account.planType ?? "unknown"}</span>
+          <span className="flex items-center gap-2">
+            plan:
+            <PlanBadge planType={account.planType} />
+          </span>
           <span>subscription: {formatDate(account.subscriptionExpiresAt)}</span>
-          <span>updated: {formatDateTime(account.quota?.updatedAt ?? null)}</span>
+          <span>
+            updated: {formatDateTime(account.quota?.updatedAt ?? null)}
+          </span>
         </div>
       </article>
-      {isLast ? null : <div className="my-5 border-t border-dashed border-stroke-soft-200" />}
+      {isLast ? null : (
+        <div className="my-5 border-t border-dashed border-stroke-soft-200" />
+      )}
     </>
-  );
-}
-
-function ScheduleCard({
-  accounts,
-  nextRefresh,
-}: {
-  accounts: UiStatus["accounts"];
-  nextRefresh: string | null;
-}) {
-  const sorted = [...accounts]
-    .filter((account) => account.nextRefreshAt !== null)
-    .sort((left, right) => String(left.nextRefreshAt).localeCompare(String(right.nextRefreshAt)));
-
-  return (
-    <Card>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-label-lg text-text-strong-950">下次刷新</div>
-          <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            {formatDateTime(nextRefresh)}
-          </div>
-        </div>
-        <Badge color="purple" label="schedule" />
-      </div>
-      <Divider />
-      <div className="grid gap-3">
-        {sorted.length === 0 ? (
-          <div className="text-paragraph-sm text-text-sub-600">没有可计算的下次刷新时间</div>
-        ) : (
-          sorted.map((account) => (
-            <StatusRow
-              key={account.alias}
-              label={account.alias}
-              value={formatDateTime(account.nextRefreshAt)}
-            />
-          ))
-        )}
-      </div>
-    </Card>
   );
 }
 
@@ -250,17 +364,24 @@ function FailuresCard({ failures }: { failures: Array<[string, string]> }) {
     <Card>
       <div className="flex items-center justify-between gap-4">
         <div className="text-label-lg text-text-strong-950">失败记录</div>
-        <Badge color={failures.length === 0 ? "gray" : "red"} label={`${failures.length}`} />
+        <MetadataBadge
+          color={failures.length === 0 ? "gray" : "red"}
+          label={`${failures.length}`}
+        />
       </div>
-      <Divider />
+      <Divider.Root className="my-5" />
       <div className="grid gap-3">
         {failures.length === 0 ? (
-          <div className="text-paragraph-sm text-text-sub-600">暂无失败账号</div>
+          <div className="text-paragraph-sm text-text-sub-600">
+            暂无失败账号
+          </div>
         ) : (
           failures.map(([alias, reason]) => (
             <div className="rounded-20 bg-error-lighter p-3" key={alias}>
               <div className="text-label-sm text-error-base">{alias}</div>
-              <div className="mt-1 text-paragraph-xs text-text-sub-600">{reason}</div>
+              <div className="mt-1 text-paragraph-xs text-text-sub-600">
+                {reason}
+              </div>
             </div>
           ))
         )}
@@ -279,7 +400,6 @@ function QuotaBlock({
   resetAt: string | null;
 }) {
   const tone = quotaTone(percent);
-  const width = `${Math.max(0, Math.min(100, percent ?? 0))}%`;
 
   return (
     <div>
@@ -289,13 +409,10 @@ function QuotaBlock({
           {percent === null ? "unknown" : `${percent}%`}
         </span>
       </div>
-      <div className="h-2 rounded-full bg-bg-weak-50">
-        <div
-          className={`h-2 rounded-full transition-[width] duration-700 ease-out ${tone.barClass}`}
-          style={{ width }}
-        />
+      <ProgressBar.Root color={tone.progressColor} value={percent ?? 0} />
+      <div className="mt-2 text-paragraph-xs text-text-sub-600">
+        reset: {formatDateTime(resetAt)}
       </div>
-      <div className="mt-2 text-paragraph-xs text-text-sub-600">reset: {formatDateTime(resetAt)}</div>
     </div>
   );
 }
@@ -318,57 +435,113 @@ function Card({
   className?: string;
 }) {
   return (
-    <div className={`rounded-20 border border-stroke-soft-200 bg-bg-white-0 p-6 shadow-regular-md ${className}`}>
+    <div
+      className={`rounded-20 border border-stroke-soft-200 bg-bg-white-0 p-6 shadow-regular-md ${className}`}
+    >
       {children}
     </div>
   );
 }
 
-function StatusRow({ label, value }: { label: string; value: string }) {
+function StatusDetailRow({
+  description,
+  label,
+  value,
+}: {
+  description: string;
+  label: string;
+  value: string;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-paragraph-sm text-text-sub-600">{label}</span>
-      <span className="text-right text-label-sm text-text-strong-950">{value}</span>
+    <div className="grid gap-1">
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-label-sm text-text-strong-950">{label}</span>
+        <span className="text-right text-label-sm text-text-strong-950">
+          {value}
+        </span>
+      </div>
+      <div className="text-paragraph-xs text-text-sub-600">{description}</div>
     </div>
   );
 }
 
-function Badge({ label, color }: { label: string; color: BadgeColor }) {
-  const colorClass: Record<BadgeColor, string> = {
-    blue: "bg-information-lighter text-information-base",
-    gray: "bg-faded-lighter text-faded-base",
-    green: "bg-success-lighter text-success-base",
-    purple: "bg-feature-lighter text-feature-base",
-    red: "bg-error-lighter text-error-base",
-  };
+function QuotaToasts({ quota }: { quota: UiStatus["quota"] }) {
+  useEffect(() => {
+    if (quota.lastWakeAt !== null && quota.lastMissedCheckCount > 0) {
+      const storageKey = `cxa-wake-toast:${quota.lastWakeAt}:${quota.lastMissedCheckCount}`;
+      if (window.localStorage.getItem(storageKey) !== "seen") {
+        window.localStorage.setItem(storageKey, "seen");
+        toast.custom(
+          (t) => (
+            <ToastAlert.Root
+              message={`休眠期间错过 ${formatCount(quota.lastMissedCheckCount)} 个检查周期，已在唤醒后重新检查。`}
+              status="success"
+              t={t}
+            />
+          ),
+          { duration: 5_000 },
+        );
+      }
+    }
+  }, [quota.lastMissedCheckCount, quota.lastWakeAt]);
+
+  useEffect(() => {
+    if (!quota.serviceRecovered) return;
+    toast.custom(
+      (t) => (
+        <ToastAlert.Root
+          message="检测到自动刷新已开启但服务未运行，已重新启动后台检查。"
+          status="success"
+          t={t}
+        />
+      ),
+      { duration: 5_000 },
+    );
+  }, [quota.serviceRecovered]);
+
+  return null;
+}
+
+function MetadataBadge({
+  color,
+  label,
+}: {
+  color: MetadataBadgeColor;
+  label: string;
+}) {
   return (
-    <span className={`inline-flex h-5 items-center justify-center rounded-full px-2 text-label-xs ${colorClass[color]}`}>
+    <Badge.Root color={badgeColor(color)} size="medium" variant="lighter">
       {label}
-    </span>
+    </Badge.Root>
   );
 }
 
-function Divider() {
-  return <div className="my-5 h-px w-full border-t border-dashed border-stroke-soft-200" />;
+function PlanBadge({ planType }: { planType: string | null }) {
+  const plan = formatPlan(planType);
+  return (
+    <Badge.Root color={planBadgeColor(plan)} size="medium" variant="lighter">
+      {plan}
+    </Badge.Root>
+  );
 }
 
 function quotaTone(percent: number | null): {
-  barClass: string;
+  progressColor: "blue" | "green" | "orange" | "red";
   textClass: string;
 } {
   if (percent === null) {
-    return { barClass: "bg-faded-base", textClass: "text-text-sub-600" };
+    return { progressColor: "blue", textClass: "text-text-sub-600" };
   }
   if (percent >= 70) {
-    return { barClass: "bg-success-base", textClass: "text-success-base" };
+    return { progressColor: "green", textClass: "text-success-base" };
   }
   if (percent >= 40) {
-    return { barClass: "bg-information-base", textClass: "text-information-base" };
+    return { progressColor: "blue", textClass: "text-information-base" };
   }
   if (percent >= 20) {
-    return { barClass: "bg-warning-base", textClass: "text-warning-base" };
+    return { progressColor: "orange", textClass: "text-warning-base" };
   }
-  return { barClass: "bg-error-base", textClass: "text-error-base" };
+  return { progressColor: "red", textClass: "text-error-base" };
 }
 
 async function fetchStatus(): Promise<UiStatus> {
@@ -376,14 +549,14 @@ async function fetchStatus(): Promise<UiStatus> {
   if (!response.ok) {
     throw new Error(`状态读取失败：${response.status}`);
   }
-  return await response.json() as UiStatus;
+  return (await response.json()) as UiStatus;
 }
 
 function formatDateTime(value: string | null): string {
   if (value === null) return "暂无";
   if (value.includes(" - ")) return value;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "暂无";
+  if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -400,6 +573,36 @@ function formatDate(value: string | null): string {
     month: "2-digit",
     day: "2-digit",
   });
+}
+
+function formatPlan(value: string | null): string {
+  return value === null || value.trim().length === 0
+    ? "free"
+    : value.trim().toLowerCase();
+}
+
+function formatCount(value: number): string {
+  return Number.isFinite(value) ? `${value}` : "0";
+}
+
+function badgeColor(
+  color: MetadataBadgeColor,
+): "blue" | "gray" | "green" | "purple" | "red" {
+  return color;
+}
+
+function planBadgeColor(plan: string): "gray" | "orange" | "pink" {
+  if (plan === "plus") return "orange";
+  if (plan === "pro") return "pink";
+  return "gray";
+}
+
+function serviceBadgeColor(quota: UiStatus["quota"]): MetadataBadgeColor {
+  return quota.enabled && quota.serviceRunning ? "green" : "red";
+}
+
+function serviceBadgeLabel(quota: UiStatus["quota"]): string {
+  return quota.enabled && quota.serviceRunning ? "active" : "offline";
 }
 
 function errorMessage(error: unknown): string {

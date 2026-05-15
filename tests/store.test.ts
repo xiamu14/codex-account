@@ -48,4 +48,5 @@ describe('AccountStore', () => {
 
     await expect(store.deleteAccount('user@example.com')).rejects.toThrow('deactive');
   });
+
 });

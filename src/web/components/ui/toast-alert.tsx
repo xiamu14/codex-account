@@ -1,0 +1,72 @@
+import * as React from "react";
+import {
+  RiAlertFill,
+  RiCheckboxCircleFill,
+  RiErrorWarningFill,
+  RiInformationFill,
+  RiMagicFill,
+} from "@remixicon/react";
+import * as Alert from "./alert.tsx";
+import { toast } from "./toast.tsx";
+
+type AlertToastProps = {
+  dismissable?: boolean;
+  icon?: React.ElementType;
+  message: string;
+  status?: React.ComponentPropsWithoutRef<typeof Alert.Root>["status"];
+  t: string | number;
+  variant?: React.ComponentPropsWithoutRef<typeof Alert.Root>["variant"];
+};
+
+function Root({
+  dismissable = true,
+  icon,
+  message,
+  status = "feature",
+  t,
+  variant = "stroke",
+}: AlertToastProps) {
+  let Icon: React.ElementType;
+  if (icon) {
+    Icon = icon;
+  } else {
+    switch (status) {
+      case "success":
+        Icon = RiCheckboxCircleFill;
+        break;
+      case "warning":
+        Icon = RiAlertFill;
+        break;
+      case "error":
+        Icon = RiErrorWarningFill;
+        break;
+      case "information":
+        Icon = RiInformationFill;
+        break;
+      case "feature":
+      default:
+        Icon = RiMagicFill;
+        break;
+    }
+  }
+
+  return (
+    <Alert.Root
+      className="w-[360px]"
+      size="small"
+      status={status}
+      variant={variant}
+    >
+      <Alert.Icon as={Icon} />
+      {message}
+      {dismissable && (
+        <button onClick={() => toast.dismiss(t)} type="button">
+          <Alert.CloseIcon />
+        </button>
+      )}
+    </Alert.Root>
+  );
+}
+Root.displayName = "AlertToast";
+
+export { Root };

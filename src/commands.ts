@@ -25,6 +25,7 @@ import { runsRoot } from "./paths.ts";
 import { confirm, createSpinner, inputText, selectAlias, selectAliases } from "./prompt.ts";
 import {
   isAutoQuotaServiceRunning,
+  recoverAutoQuotaServiceIfNeeded,
   startAutoQuotaService,
   stopAutoQuotaService,
 } from "./service.ts";
@@ -336,8 +337,10 @@ async function refreshAccountQuota(
       runHome,
       context.cwd,
     );
+    const account = normalizeAccountPlanFromQuota(snapshot.account, snapshot.quota);
     await store.writeMeta(
-      mergeMeta(alias, await store.readMeta(alias), snapshot.account, {
+      mergeMeta(alias, await store.readMeta(alias), account, {
+        overwritePlanTypeWithNull: true,
         clearSubscriptionIfNotSubscribed: true,
       }),
     );
@@ -503,12 +506,23 @@ export async function autoQuotaStopCommand(
   });
 }
 
-export async function autoQuotaStatusCommand(context: CommandContext): Promise<void> {
+export async function autoQuotaStatusCommand(
+  context: CommandContext,
+  options: { recoverService?: boolean } = {},
+): Promise<void> {
   const store = new AccountStore(context.appHome);
   const autoState = await readAutoQuotaState(context.appHome);
-  const serviceRunning = await isAutoQuotaServiceRunning(context.appHome);
+  const serviceStatus = options.recoverService === false
+    ? {
+        serviceRunning: await isAutoQuotaServiceRunning(context.appHome),
+        recovered: false,
+      }
+    : await recoverAutoQuotaServiceIfNeeded(context, autoState);
   const summaries = await store.listSummaries();
-  context.stdout.write(`${renderAutoQuotaStatus(autoState, serviceRunning, summaries)}\n`);
+  context.stdout.write(`${renderAutoQuotaStatus(autoState, serviceStatus.serviceRunning, summaries)}\n`);
+  if (serviceStatus.recovered) {
+    context.stdout.write("后台服务已自动恢复。\n");
+  }
 }
 
 export async function autoQuotaServiceCommand(context: CommandContext): Promise<void> {
@@ -524,6 +538,16 @@ export async function autoQuotaServiceCommand(context: CommandContext): Promise<
       return;
     }
 
+    const nowBeforeTick = new Date();
+    const wakeStatus = resolveMissedCheckStatus(state, nowBeforeTick);
+    if (wakeStatus !== null) {
+      await writeAutoQuotaState(context.appHome, {
+        ...state,
+        lastWakeAt: nowBeforeTick.toISOString(),
+        lastMissedCheckCount: wakeStatus.missedCheckCount,
+      });
+    }
+
     await autoQuotaTickCommand(context);
     const now = new Date();
     const delay = randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS);
@@ -534,6 +558,23 @@ export async function autoQuotaServiceCommand(context: CommandContext): Promise<
     });
     await sleep(Math.max(0, nextCheckAt.getTime() - Date.now()));
   }
+}
+
+function resolveMissedCheckStatus(
+  state: AutoQuotaState,
+  now: Date,
+): { missedCheckCount: number } | null {
+  if (state.nextCheckAt === null) return null;
+  const nextCheckAt = new Date(state.nextCheckAt);
+  if (Number.isNaN(nextCheckAt.getTime())) return null;
+  const lateMs = now.getTime() - nextCheckAt.getTime();
+  if (lateMs < AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000) return null;
+  return {
+    missedCheckCount: Math.max(
+      1,
+      Math.floor(lateMs / (AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000)),
+    ),
+  };
 }
 
 async function resolveNextAutoQuotaCheckAt(
@@ -628,6 +669,9 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
 
     for (const account of state.accounts) {
       const alias = account.alias;
+      if (!(await isAutoCallEligibleAccount(store, alias))) {
+        continue;
+      }
       const quota = quotaByAlias.get(alias);
       if (quota === undefined) continue;
       const resetValue = quota.fiveHour?.resetsAt ?? null;
@@ -703,6 +747,18 @@ function mergeFailureCounts(
     next[alias] = (next[alias] ?? 0) + 1;
   }
   return next;
+}
+
+async function isAutoCallEligibleAccount(
+  store: AccountStore,
+  alias: string,
+): Promise<boolean> {
+  const meta = await store.readMeta(alias);
+  const quota = await store.readQuota(alias);
+  if (isStaleSubscriptionPlan(meta?.planType ?? null, meta?.subscriptionExpiresAt ?? null, quota)) {
+    return false;
+  }
+  return isSubscriptionPlan(meta?.planType ?? null);
 }
 
 async function waitBeforeQuotaRefresh(index: number, total: number): Promise<void> {
@@ -867,10 +923,15 @@ function mergeMeta(
     planType: string | null;
     subscriptionExpiresAt: string | null;
   },
-  options: { clearSubscriptionIfNotSubscribed?: boolean } = {},
+  options: {
+    overwritePlanTypeWithNull?: boolean;
+    clearSubscriptionIfNotSubscribed?: boolean;
+  } = {},
 ): AccountMeta {
   const now = new Date().toISOString();
-  const planType = next.planType ?? existing?.planType ?? null;
+  const planType =
+    next.planType ??
+    (options.overwritePlanTypeWithNull ? "free" : (existing?.planType ?? null));
   const shouldClearSubscription = Boolean(
     options.clearSubscriptionIfNotSubscribed && !isSubscriptionPlan(planType),
   );
@@ -919,6 +980,44 @@ function isSubscriptionPlan(planType: string | null): boolean {
   return ["plus", "pro", "team", "enterprise", "business"].includes(
     planType.toLowerCase(),
   );
+}
+
+function normalizeAccountPlanFromQuota(
+  account: {
+    email: string | null;
+    planType: string | null;
+    subscriptionExpiresAt: string | null;
+  },
+  quota: AccountQuota | null,
+): {
+  email: string | null;
+  planType: string | null;
+  subscriptionExpiresAt: string | null;
+} {
+  if (isStaleSubscriptionPlan(account.planType, account.subscriptionExpiresAt, quota)) {
+    return {
+      ...account,
+      planType: "free",
+    };
+  }
+  return account;
+}
+
+function isStaleSubscriptionPlan(
+  planType: string | null,
+  subscriptionExpiresAt: string | null,
+  quota: AccountQuota | null,
+): boolean {
+  return (
+    quota !== null &&
+    isSubscriptionPlan(planType) &&
+    subscriptionExpiresAt === null &&
+    !hasUsableWeeklyQuota(quota)
+  );
+}
+
+function hasUsableWeeklyQuota(quota: AccountQuota): boolean {
+  return quota.weekly?.percentLeft !== null && quota.weekly?.percentLeft !== undefined;
 }
 
 function formatQuotaWarning(alias: string, error: string | null): string {
@@ -1111,7 +1210,12 @@ function formatFriendlyTime(value: string | null): string {
 }
 
 function formatNextCheckTime(state: AutoQuotaState): string {
-  if (state.nextCheckAt !== null) return formatFriendlyTime(state.nextCheckAt);
+  if (state.nextCheckAt !== null) {
+    const nextCheckAt = parseDate(state.nextCheckAt);
+    if (nextCheckAt === null) return "还没有记录";
+    if (nextCheckAt.getTime() <= Date.now()) return "等待后台服务执行";
+    return formatFriendlyTime(state.nextCheckAt);
+  }
   if (!state.enabled || state.lastTickAt === null) return "还没有记录";
   const lastTickAt = parseDate(state.lastTickAt);
   if (lastTickAt === null) return "还没有记录";

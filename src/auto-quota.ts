@@ -21,6 +21,8 @@ export function createDefaultAutoQuotaState(): AutoQuotaState {
     consecutiveFailureCountByAlias: {},
     lastQuotaFetchAliases: [],
     handledFiveHourResets: {},
+    lastWakeAt: null,
+    lastMissedCheckCount: 0,
     updatedAt: now,
   };
 }
@@ -59,6 +61,11 @@ function migrateAutoQuotaState(value: unknown): AutoQuotaState | null {
   if (!isStringRecord(value.lastFailureByAlias)) return null;
   if (!isStringArray(value.lastQuotaFetchAliases)) return null;
   if (!isStringRecord(value.handledFiveHourResets)) return null;
+  if (value.lastWakeAt !== undefined && value.lastWakeAt !== null && !isString(value.lastWakeAt)) return null;
+  if (
+    value.lastMissedCheckCount !== undefined &&
+    (typeof value.lastMissedCheckCount !== "number" || !Number.isFinite(value.lastMissedCheckCount))
+  ) return null;
   if (!isString(value.updatedAt)) return null;
 
   return {
@@ -76,6 +83,8 @@ function migrateAutoQuotaState(value: unknown): AutoQuotaState | null {
       : {},
     lastQuotaFetchAliases: value.lastQuotaFetchAliases,
     handledFiveHourResets: value.handledFiveHourResets,
+    lastWakeAt: value.lastWakeAt === undefined ? null : value.lastWakeAt,
+    lastMissedCheckCount: value.lastMissedCheckCount === undefined ? 0 : value.lastMissedCheckCount,
     updatedAt: value.updatedAt,
   };
 }

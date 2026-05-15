@@ -31,7 +31,7 @@ export function sortAccountsForList(accounts: AccountSummary[]): AccountSummary[
 function renderAccount(account: AccountSummary): string {
   const marker = account.isActive ? chalk.green.bold('*') : ' ';
   const email = account.meta?.email ?? 'unknown';
-  const plan = account.meta?.planType ?? 'unknown';
+  const plan = renderPlan(account.meta?.planType ?? null);
   const subscription = renderSubscription(account.meta?.subscriptionExpiresAt ?? null);
   const fiveHour = renderLimit(account.quota?.fiveHour ?? null);
   const weekly = renderLimit(account.quota?.weekly ?? null);
@@ -76,6 +76,10 @@ function renderSubscription(value: string | null): string {
     return `${chalk.yellow.bold(formatted)}${chalk.yellow.bold(`  expires in ${daysLeft}d`)}`;
   }
   return formatted;
+}
+
+function renderPlan(value: string | null): string {
+  return value === null || value.trim().length === 0 ? 'free' : value;
 }
 
 export function formatDateTime(value: string | null): string {

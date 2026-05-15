@@ -8,7 +8,7 @@ import {
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
   readAutoQuotaState,
 } from "./auto-quota.ts";
-import { isAutoQuotaServiceRunning } from "./service.ts";
+import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
 import { AccountStore } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
 import type { UiStatus } from "./ui-status.ts";
@@ -137,11 +137,11 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
 
 async function readStatus(context: CommandContext): Promise<UiStatus> {
   const store = new AccountStore(context.appHome);
-  const [accounts, autoState, serviceRunning] = await Promise.all([
+  const [accounts, autoState] = await Promise.all([
     store.listSummaries(),
     readAutoQuotaState(context.appHome),
-    isAutoQuotaServiceRunning(context.appHome),
   ]);
+  const serviceStatus = await recoverAutoQuotaServiceIfNeeded(context, autoState);
   const schedule = buildAutoQuotaSchedule(
     accounts
       .map((account) => ({
@@ -163,12 +163,27 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       hasAuth: account.hasAuth,
       quota: account.quota,
       nextRefreshAt: schedule.get(account.alias)?.toISOString() ?? null,
+      lastQuotaFetchAt: autoState.lastQuotaFetchAliases.includes(account.alias)
+        ? autoState.lastQuotaFetchAt
+        : null,
+      lastCallAt: autoState.lastSuccessAliases.includes(account.alias)
+        ? autoState.lastCallAt
+        : null,
+      lastCallStatus: autoState.lastSuccessAliases.includes(account.alias)
+        ? "success"
+        : "waiting",
     })),
     quota: {
       enabled: autoState.enabled,
-      serviceRunning,
+      serviceRunning: serviceStatus.serviceRunning,
+      serviceRecovered: serviceStatus.recovered,
+      healthStatus: resolveHealthStatus(autoState, serviceStatus.serviceRunning),
+      healthMessage: resolveHealthMessage(autoState, serviceStatus.serviceRunning),
+      checkIntervalText: `${AUTO_QUOTA_MIN_INTERVAL_MINUTES}-${AUTO_QUOTA_MAX_INTERVAL_MINUTES} 分钟`,
       lastTickAt: autoState.lastTickAt,
       nextCheckAt: resolveNextCheckAt(autoState),
+      lastWakeAt: autoState.lastWakeAt,
+      lastMissedCheckCount: autoState.lastMissedCheckCount,
       lastQuotaFetchAt: autoState.lastQuotaFetchAt,
       lastCallAt: autoState.lastCallAt,
       lastSuccessAliases: autoState.lastSuccessAliases,
@@ -176,6 +191,50 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       lastQuotaFetchAliases: autoState.lastQuotaFetchAliases,
     },
   };
+}
+
+function resolveHealthStatus(
+  state: AutoQuotaState,
+  serviceRunning: boolean,
+): UiStatus["quota"]["healthStatus"] {
+  if (!state.enabled) return "paused";
+  if (!serviceRunning) return "offline";
+  if (isNextCheckOverdue(state, new Date())) return "delayed";
+  return "healthy";
+}
+
+function resolveHealthMessage(
+  state: AutoQuotaState,
+  serviceRunning: boolean,
+): string {
+  const missed = resolveCurrentMissedCheckCount(state, new Date());
+  if (!state.enabled) return "自动刷新已停止。";
+  if (!serviceRunning) return "后台服务未运行，定时检查不会执行。";
+  if (missed > 0) return `后台检查已延迟，可能错过 ${missed} 个检查周期。`;
+  if (isNextCheckOverdue(state, new Date())) return "计划检查时间已过，等待后台服务执行。";
+  return "后台服务在线，定时检查正常。";
+}
+
+function isNextCheckOverdue(state: AutoQuotaState, now: Date): boolean {
+  if (!state.enabled || state.nextCheckAt === null) return false;
+  const nextCheckAt = new Date(state.nextCheckAt);
+  if (Number.isNaN(nextCheckAt.getTime())) return false;
+  return nextCheckAt.getTime() <= now.getTime();
+}
+
+function resolveCurrentMissedCheckCount(
+  state: AutoQuotaState,
+  now: Date,
+): number {
+  if (!state.enabled || state.nextCheckAt === null) return 0;
+  const nextCheckAt = new Date(state.nextCheckAt);
+  if (Number.isNaN(nextCheckAt.getTime())) return 0;
+  const lateMs = now.getTime() - nextCheckAt.getTime();
+  if (lateMs < AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000) return 0;
+  return Math.max(
+    1,
+    Math.floor(lateMs / (AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000)),
+  );
 }
 
 async function readIndexHtml(indexPath: string): Promise<string> {
@@ -210,7 +269,12 @@ function contentType(filePath: string): string {
 }
 
 function resolveNextCheckAt(state: AutoQuotaState): string | null {
-  if (state.nextCheckAt !== null) return state.nextCheckAt;
+  if (state.nextCheckAt !== null) {
+    const nextCheckAt = new Date(state.nextCheckAt);
+    if (Number.isNaN(nextCheckAt.getTime())) return null;
+    if (nextCheckAt.getTime() <= Date.now()) return "等待后台服务执行";
+    return state.nextCheckAt;
+  }
   if (!state.enabled || state.lastTickAt === null) return null;
   const lastTickAt = new Date(state.lastTickAt);
   if (Number.isNaN(lastTickAt.getTime())) return null;

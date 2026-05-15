@@ -10,12 +10,21 @@ export type UiStatus = {
     hasAuth: boolean;
     quota: AccountQuota | null;
     nextRefreshAt: string | null;
+    lastQuotaFetchAt: string | null;
+    lastCallAt: string | null;
+    lastCallStatus: "success" | "waiting";
   }>;
   quota: {
     enabled: boolean;
     serviceRunning: boolean;
+    serviceRecovered: boolean;
+    healthStatus: "healthy" | "paused" | "offline" | "delayed";
+    healthMessage: string;
+    checkIntervalText: string;
     lastTickAt: string | null;
     nextCheckAt: string | null;
+    lastWakeAt: string | null;
+    lastMissedCheckCount: number;
     lastQuotaFetchAt: string | null;
     lastCallAt: string | null;
     lastSuccessAliases: string[];

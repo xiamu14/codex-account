@@ -87,6 +87,8 @@ export function isAutoQuotaState(value: unknown): value is AutoQuotaState {
     isNumberRecord(value.consecutiveFailureCountByAlias) &&
     isStringArray(value.lastQuotaFetchAliases) &&
     isStringRecord(value.handledFiveHourResets) &&
+    isNullableString(value.lastWakeAt) &&
+    isNumber(value.lastMissedCheckCount) &&
     isString(value.updatedAt)
   );
 }

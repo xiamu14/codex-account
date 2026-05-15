@@ -283,6 +283,75 @@ describe("quotaCommand", () => {
     expect(errorOutput.text).toContain("读取额度失败");
   });
 
+  test("clears an expired plus plan when quota refresh reports no subscription plan", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: null,
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: "2026-05-01T00:00:00.000Z",
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("free");
+    expect(meta?.subscriptionExpiresAt).toBeNull();
+  });
+
+  test("clears a stale plus plan when weekly quota is unavailable", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: "plus",
+      weeklyPercentLeft: null,
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("free");
+    expect(meta?.subscriptionExpiresAt).toBeNull();
+  });
+
+  test("clears a stale plus plan when weekly quota percent is unknown", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: "plus",
+      weeklyUnknown: true,
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("free");
+    expect(meta?.subscriptionExpiresAt).toBeNull();
+  });
+
+
   test("prints a short refresh hint when quota fails because token was invalidated", async () => {
     const output = new CaptureStream();
     const errorOutput = new CaptureStream();
@@ -476,7 +545,7 @@ describe("auto quota commands", () => {
       "utf8",
     );
 
-    await autoQuotaStatusCommand(context);
+    await autoQuotaStatusCommand(context, { recoverService: false });
 
     expect(output.text).toContain("自动刷新：已开启");
   });
@@ -614,6 +683,33 @@ describe("auto quota commands", () => {
     expect(autoState.handledFiveHourResets["high@example.com"]).toBe(reset);
   });
 
+  test("tick does not call free accounts when their 5h quota reset is due", async () => {
+    const context = await makeContext();
+    const reset = pastIso();
+    context.codexBin = await writeCallFakeCodex(context.appHome, {
+      fiveHourReset: reset,
+      planType: "free",
+      weeklyPercentLeft: null,
+    });
+    const authPath = path.join(context.appHome, "free-auth.json");
+    await writeFile(authPath, '{"token":"free"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("free@example.com", authPath, {
+      email: "free@example.com",
+      planType: "free",
+      subscriptionExpiresAt: null,
+    });
+    await store.writeQuota("free@example.com", makeQuota(80, reset));
+    await enableAutoQuota(context.appHome);
+
+    await autoQuotaTickCommand(context);
+
+    const autoState = await readAutoQuotaState(context.appHome);
+    expect(autoState.lastQuotaFetchAliases).toEqual(["free@example.com"]);
+    expect(autoState.lastSuccessAliases).toEqual([]);
+    expect(autoState.handledFiveHourResets["free@example.com"]).toBeUndefined();
+  });
+
   test("status explains successful and failed accounts clearly", async () => {
     const output = new CaptureStream();
     const context = await makeContext();
@@ -650,10 +746,12 @@ describe("auto quota commands", () => {
       },
       lastQuotaFetchAliases: ["work@example.com"],
       handledFiveHourResets: {},
+      lastWakeAt: null,
+      lastMissedCheckCount: 0,
       updatedAt: new Date().toISOString(),
     });
 
-    await autoQuotaStatusCommand(context);
+    await autoQuotaStatusCommand(context, { recoverService: false });
 
     expect(output.text).toContain("自动刷新：已开启");
     expect(output.text).toContain("后台服务：");
@@ -884,6 +982,8 @@ async function enableAutoQuota(appHome: string): Promise<void> {
     consecutiveFailureCountByAlias: {},
     lastQuotaFetchAliases: [],
     handledFiveHourResets: {},
+    lastWakeAt: null,
+    lastMissedCheckCount: 0,
     updatedAt: new Date().toISOString(),
   });
 }
@@ -939,23 +1039,38 @@ async function writeLiveAuth(
 
 async function writeFakeCodex(
   root: string,
-  options: { quotaError?: string; fiveHourPercentLeft?: number; fiveHourReset?: string } = {},
+  options: {
+    quotaError?: string;
+    fiveHourPercentLeft?: number;
+    fiveHourReset?: string;
+    planType?: string | null;
+    weeklyPercentLeft?: number | null;
+    weeklyUnknown?: boolean;
+  } = {},
 ): Promise<string> {
   const scriptPath = path.join(root, "fake-codex.mjs");
   const fiveHour = {
     percentLeft: options.fiveHourPercentLeft ?? 80,
     resetsAt: options.fiveHourReset,
   };
+  const weekly = options.weeklyUnknown
+    ? { percentLeft: null, resetsAt: null }
+    : Object.hasOwn(options, "weeklyPercentLeft")
+      ? options.weeklyPercentLeft === null
+        ? null
+        : { percentLeft: options.weeklyPercentLeft }
+      : { percentLeft: 55 };
   const quotaLine =
     options.quotaError === undefined
-      ? `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: ${JSON.stringify(fiveHour)}, weekly: { percentLeft: 55 } } } }) + "\\n");`
+      ? `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: ${JSON.stringify(fiveHour)}, weekly: ${JSON.stringify(weekly)} } } }) + "\\n");`
       : `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, error: { code: -32603, message: ${JSON.stringify(options.quotaError)} } }) + "\\n");`;
+  const planType = Object.hasOwn(options, "planType") ? options.planType : "plus";
   await writeFile(
     scriptPath,
     [
       "#!/usr/bin/env node",
       'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) + "\\n");',
-      'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { account: { email: "fresh@example.com", planType: "plus" } } }) + "\\n");',
+      `process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { account: { email: "fresh@example.com", planType: ${JSON.stringify(planType)} } } }) + "\\n");`,
       quotaLine,
     ].join("\n"),
     "utf8",
@@ -1004,13 +1119,24 @@ async function writeRefreshFakeCodex(
 
 async function writeCallFakeCodex(
   root: string,
-  options: { fiveHourReset?: string } = {},
+  options: {
+    fiveHourReset?: string;
+    planType?: string | null;
+    weeklyPercentLeft?: number | null;
+  } = {},
 ): Promise<string> {
   const scriptPath = path.join(root, "fake-call-codex.mjs");
   const fiveHour = {
     percentLeft: 80,
     resetsAt: options.fiveHourReset ?? new Date(Date.now() + 60 * 60_000).toISOString(),
   };
+  const planType = Object.hasOwn(options, "planType") ? options.planType : "plus";
+  const weekly =
+    Object.hasOwn(options, "weeklyPercentLeft")
+      ? options.weeklyPercentLeft === null
+        ? null
+        : { percentLeft: options.weeklyPercentLeft }
+      : { percentLeft: 55 };
   await writeFile(
     scriptPath,
     [
@@ -1019,8 +1145,8 @@ async function writeCallFakeCodex(
       'import path from "node:path";',
       "if (process.argv[2] === 'app-server') {",
       '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) + "\\n");',
-      '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { account: { email: "fresh@example.com", planType: "plus" } } }) + "\\n");',
-      `  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: ${JSON.stringify(fiveHour)}, weekly: { percentLeft: 55 } } } }) + "\\n");`,
+      `  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { account: { email: "fresh@example.com", planType: ${JSON.stringify(planType)} } } }) + "\\n");`,
+      `  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { rateLimits: { fiveHour: ${JSON.stringify(fiveHour)}, weekly: ${JSON.stringify(weekly)} } } }) + "\\n");`,
       "  process.exit(0);",
       "}",
       "if (process.argv[2] !== 'exec') { process.exit(0); }",
