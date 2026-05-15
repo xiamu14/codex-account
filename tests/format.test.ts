@@ -148,18 +148,18 @@ describe('sortAccountsForList', () => {
     ]);
   });
 
-  test('keeps accounts with zero 5h or weekly limit at the end', () => {
+  test('keeps active account first even when its 5h or weekly limit is zero', () => {
     const accounts: AccountSummary[] = [
       makeSummary('zero-weekly-active', true, 99, 0, '2026-05-17T00:00:00.000Z'),
-      makeSummary('normal-active', true, 20, 20, '2026-06-01T00:00:00.000Z'),
       makeSummary('normal-high', false, 95, 50, '2026-06-10T00:00:00.000Z'),
+      makeSummary('normal-mid', false, 20, 20, '2026-06-01T00:00:00.000Z'),
       makeSummary('zero-five-hour', false, 0, 100, '2026-05-16T00:00:00.000Z')
     ];
 
     expect(sortAccountsForList(accounts).map((account) => account.alias)).toEqual([
-      'normal-active',
-      'normal-high',
       'zero-weekly-active',
+      'normal-high',
+      'normal-mid',
       'zero-five-hour'
     ]);
   });

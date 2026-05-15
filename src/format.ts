@@ -12,11 +12,11 @@ export function sortAccountsForList(accounts: AccountSummary[]): AccountSummary[
   return accounts
     .map((account, index) => ({ account, index }))
     .sort((left, right) => {
-      const zeroQuotaDelta = Number(hasZeroQuota(left.account)) - Number(hasZeroQuota(right.account));
-      if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
-
       const activeDelta = Number(right.account.isActive) - Number(left.account.isActive);
       if (activeDelta !== 0) return activeDelta;
+
+      const zeroQuotaDelta = Number(hasZeroQuota(left.account)) - Number(hasZeroQuota(right.account));
+      if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
 
       const fiveHourDelta =
         limitSortValue(right.account.quota?.fiveHour ?? null) - limitSortValue(left.account.quota?.fiveHour ?? null);
