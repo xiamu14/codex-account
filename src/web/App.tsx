@@ -107,7 +107,7 @@ function QuotaStatusCard({ quota }: { quota: UiStatus["quota"] }) {
         <div>
           <div className="text-label-lg text-text-strong-950">定时任务</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            自动任务和检查节奏
+            自动任务、刷新额度和重置额度
           </div>
         </div>
         <MetadataBadge
@@ -118,7 +118,7 @@ function QuotaStatusCard({ quota }: { quota: UiStatus["quota"] }) {
       <Divider.Root className="my-5" />
       <div className="grid gap-3">
         <StatusDetailRow
-          description="自动检查账号 quota 和 5h reset 时间。"
+          description=""
           label="运行间隔"
           value={quota.checkIntervalText}
         />
@@ -263,7 +263,7 @@ function AccountResetRow({
       description={`下次重置：${formatDateTime(account.nextRefreshAt)}`}
       label={account.alias}
       status={{ color: "gray", label: "waiting" }}
-      value="暂无"
+      value=""
     />
   );
 }
@@ -374,9 +374,7 @@ function FailuresCard({ failures }: { failures: Array<[string, string]> }) {
       <Divider.Root className="my-5" />
       <div className="grid gap-3">
         {failures.length === 0 ? (
-          <div className="text-paragraph-sm text-text-sub-600">
-            暂无失败账号
-          </div>
+          <div className="text-paragraph-sm text-text-sub-600"></div>
         ) : (
           failures.map(([alias, reason]) => (
             <div className="rounded-20 bg-error-lighter p-3" key={alias}>
@@ -555,7 +553,7 @@ async function fetchStatus(): Promise<UiStatus> {
 }
 
 function formatDateTime(value: string | null): string {
-  if (value === null) return "暂无";
+  if (value === null) return "";
   if (value.includes(" - ")) return value;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;

@@ -62,7 +62,10 @@ export async function uiCommand(
     const assetName = c.req.path.slice("/assets/".length);
     const assetPath = path.join(assetRoot, assetName);
     const relativeAssetPath = path.relative(assetRoot, assetPath);
-    if (relativeAssetPath.startsWith("..") || path.isAbsolute(relativeAssetPath)) {
+    if (
+      relativeAssetPath.startsWith("..") ||
+      path.isAbsolute(relativeAssetPath)
+    ) {
       return c.text("Not found", 404);
     }
     try {
@@ -141,7 +144,10 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
     store.listSummaries(),
     readAutoQuotaState(context.appHome),
   ]);
-  const serviceStatus = await recoverAutoQuotaServiceIfNeeded(context, autoState);
+  const serviceStatus = await recoverAutoQuotaServiceIfNeeded(
+    context,
+    autoState,
+  );
   const schedule = buildAutoQuotaSchedule(
     accounts
       .map((account) => ({
@@ -177,8 +183,14 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       enabled: autoState.enabled,
       serviceRunning: serviceStatus.serviceRunning,
       serviceRecovered: serviceStatus.recovered,
-      healthStatus: resolveHealthStatus(autoState, serviceStatus.serviceRunning),
-      healthMessage: resolveHealthMessage(autoState, serviceStatus.serviceRunning),
+      healthStatus: resolveHealthStatus(
+        autoState,
+        serviceStatus.serviceRunning,
+      ),
+      healthMessage: resolveHealthMessage(
+        autoState,
+        serviceStatus.serviceRunning,
+      ),
       checkIntervalText: `${AUTO_QUOTA_MIN_INTERVAL_MINUTES}-${AUTO_QUOTA_MAX_INTERVAL_MINUTES} 分钟`,
       lastTickAt: autoState.lastTickAt,
       nextCheckAt: resolveNextCheckAt(autoState),
@@ -211,7 +223,8 @@ function resolveHealthMessage(
   if (!state.enabled) return "自动刷新已停止。";
   if (!serviceRunning) return "后台服务未运行，定时检查不会执行。";
   if (missed > 0) return `后台检查已延迟，可能错过 ${missed} 个检查周期。`;
-  if (isNextCheckOverdue(state, new Date())) return "计划检查时间已过，等待后台服务执行。";
+  if (isNextCheckOverdue(state, new Date()))
+    return "计划检查时间已过，等待后台服务执行。";
   return "后台服务在线，定时检查正常。";
 }
 
@@ -327,10 +340,10 @@ function stableRandomInt(value: string, min: number, max: number): number {
 }
 
 function formatDateTime(value: string | null): string {
-  if (value === null) return "暂无";
+  if (value === null) return "";
   if (value.includes(" - ")) return value;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "暂无";
+  if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
