@@ -58,9 +58,13 @@ function Root({
       variant={variant}
     >
       <Alert.Icon as={Icon} />
-      {message}
+      <span className="min-w-0 leading-5">{message}</span>
       {dismissable && (
-        <button onClick={() => toast.dismiss(t)} type="button">
+        <button
+          className="shrink-0"
+          onClick={() => toast.dismiss(t)}
+          type="button"
+        >
           <Alert.CloseIcon />
         </button>
       )}

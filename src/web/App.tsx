@@ -187,7 +187,7 @@ function Dashboard({
           onRetry={onRetryQuota}
         />
       </section>
-      <QuotaToasts quota={status.quota} />
+      <QuotaToasts accounts={status.accounts} quota={status.quota} />
       <Toaster />
     </Shell>
   );
@@ -511,14 +511,14 @@ function sortAccountsForDisplay(
   return accounts
     .map((account, index) => ({ account, index }))
     .sort((left, right) => {
+      const activeDelta =
+        Number(right.account.isActive) - Number(left.account.isActive);
+      if (activeDelta !== 0) return activeDelta;
+
       const zeroQuotaDelta =
         Number(hasZeroQuota(left.account)) -
         Number(hasZeroQuota(right.account));
       if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
-
-      const activeDelta =
-        Number(right.account.isActive) - Number(left.account.isActive);
-      if (activeDelta !== 0) return activeDelta;
 
       const fiveHourDelta =
         limitSortValue(right.account.quota?.fiveHour?.percentLeft ?? null) -
@@ -761,7 +761,15 @@ function StatusDetailRow({
   );
 }
 
-function QuotaToasts({ quota }: { quota: UiStatus["quota"] }) {
+function QuotaToasts({
+  accounts,
+  quota,
+}: {
+  accounts: UiStatus["accounts"];
+  quota: UiStatus["quota"];
+}) {
+  const activeQuotaWarning = getActiveQuotaWarning(accounts);
+
   useEffect(() => {
     if (quota.lastWakeAt !== null && quota.lastMissedCheckCount > 0) {
       const storageKey = `cxa-wake-toast:${quota.lastWakeAt}:${quota.lastMissedCheckCount}`;
@@ -794,6 +802,22 @@ function QuotaToasts({ quota }: { quota: UiStatus["quota"] }) {
       { duration: 5_000 },
     );
   }, [quota.serviceRecovered]);
+
+  useEffect(() => {
+    notifyActiveQuotaWarning(activeQuotaWarning);
+  }, [activeQuotaWarning]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      notifyActiveQuotaWarning(activeQuotaWarning);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [activeQuotaWarning]);
 
   return null;
 }
@@ -874,6 +898,63 @@ function formatFailureReason(value: string): string {
   const normalized = value.trim().replace(/[。.]$/, "");
   if (normalized === "读取额度失败") return "";
   return value;
+}
+
+function formatCompactAccountLabel(alias: string): string {
+  const trimmed = alias.trim();
+  if (trimmed.length <= 18) return trimmed;
+
+  const atIndex = trimmed.indexOf("@");
+  if (atIndex > 0) {
+    const name = trimmed.slice(0, atIndex);
+    const domain = trimmed.slice(atIndex + 1);
+    const compactName = name.length > 6 ? `${name.slice(0, 6)}...` : name;
+    const compactDomain =
+      domain === "gmail.com" ? "gmail" : domain.split(".")[0] || domain;
+    return `${compactName}@${compactDomain}`;
+  }
+
+  return `${trimmed.slice(0, 15)}...`;
+}
+
+function getActiveQuotaWarning(
+  accounts: UiStatus["accounts"],
+): { key: string; message: string } | null {
+  const activeAccount = accounts.find((account) => account.isActive);
+  if (activeAccount === undefined) return null;
+
+  const exhaustedLimits = [
+    activeAccount.quota?.fiveHour?.percentLeft === 0 ? "5h" : null,
+    activeAccount.quota?.weekly?.percentLeft === 0 ? "weekly" : null,
+  ].filter((value): value is string => value !== null);
+
+  if (exhaustedLimits.length === 0) return null;
+
+  const quotaUpdatedAt = activeAccount.quota?.updatedAt ?? "unknown";
+  const key = [
+    "cxa-active-quota-toast",
+    activeAccount.alias,
+    quotaUpdatedAt,
+    exhaustedLimits.join("+"),
+  ].join(":");
+  return {
+    key,
+    message: `${formatCompactAccountLabel(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 已用尽，建议切换。`,
+  };
+}
+
+function notifyActiveQuotaWarning(
+  warning: { key: string; message: string } | null,
+): void {
+  if (warning === null) return;
+  if (window.localStorage.getItem(warning.key) === "seen") return;
+  window.localStorage.setItem(warning.key, "seen");
+  toast.custom(
+    (t) => (
+      <ToastAlert.Root message={warning.message} status="warning" t={t} />
+    ),
+    { duration: 6_000 },
+  );
 }
 
 function formatDateTime(value: string | null): string {
