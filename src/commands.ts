@@ -22,7 +22,13 @@ import { pathExists, removePath } from "./fs.ts";
 import { renderList } from "./format.ts";
 import { withLock } from "./lock.ts";
 import { runsRoot } from "./paths.ts";
-import { confirm, createSpinner, inputText, selectAlias, selectAliases } from "./prompt.ts";
+import {
+  confirm,
+  createSpinner,
+  inputText,
+  selectAlias,
+  selectAliases,
+} from "./prompt.ts";
 import {
   isAutoQuotaServiceRunning,
   recoverAutoQuotaServiceIfNeeded,
@@ -56,8 +62,10 @@ const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
 const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
 const QUOTA_REFRESH_MIN_DELAY_MS = 1_000;
 const QUOTA_REFRESH_MAX_DELAY_MS = 5_000;
-const AUTO_QUOTA_SERVICE_MIN_DELAY_MS = AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000;
-const AUTO_QUOTA_SERVICE_MAX_DELAY_MS = AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000;
+const AUTO_QUOTA_SERVICE_MIN_DELAY_MS =
+  AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000;
+const AUTO_QUOTA_SERVICE_MAX_DELAY_MS =
+  AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000;
 
 export async function saveCommand(
   context: CommandContext,
@@ -75,22 +83,19 @@ export async function saveCommand(
       context.codexHome,
       context.cwd,
     );
-    const savedAccount = findSavedAccount(
-      await store.listSummaries(),
-      account,
-    );
+    const savedAccount = findSavedAccount(await store.listSummaries(), account);
     if (savedAccount !== null) {
-      context.stdout.write(
-        `当前账号已保存为 ${savedAccount.alias}。\n`,
-      );
+      context.stdout.write(`当前账号已保存为 ${savedAccount.alias}。\n`);
       return;
     }
 
-    const target = alias ?? await inputText(
-      "请输入账号别名",
-      account.email ?? "name@example.com",
-      validateAlias,
-    );
+    const target =
+      alias ??
+      (await inputText(
+        "请输入账号别名",
+        account.email ?? "name@example.com",
+        validateAlias,
+      ));
     assertAlias(target);
     if (await store.hasAccount(target)) {
       context.stdout.write(`账号 ${target} 已保存。\n`);
@@ -108,11 +113,9 @@ export async function loginCommand(
 ): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
-    const target = alias ?? await inputText(
-      "请输入账号别名",
-      "name@example.com",
-      validateAlias,
-    );
+    const target =
+      alias ??
+      (await inputText("请输入账号别名", "name@example.com", validateAlias));
     assertAlias(target);
     if (await store.hasAccount(target)) {
       context.stdout.write(`账号 ${target} 已保存。\n`);
@@ -120,7 +123,9 @@ export async function loginCommand(
     }
 
     await mkdir(runsRoot(context.appHome), { recursive: true });
-    const loginHome = await mkdtemp(path.join(runsRoot(context.appHome), "login-"));
+    const loginHome = await mkdtemp(
+      path.join(runsRoot(context.appHome), "login-"),
+    );
     try {
       const loginAuth = path.join(loginHome, "auth.json");
       await runCodexLogin(context.codexBin, loginHome, context.cwd);
@@ -220,11 +225,11 @@ export async function quotaCommand(
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
     const allAliases = state.accounts.map((account) => account.alias);
-    const targets = options.aliases ?? (
-      options.select === true
+    const targets =
+      options.aliases ??
+      (options.select === true
         ? await selectAliases(allAliases, "刷新额度")
-        : allAliases
-    );
+        : allAliases);
     if (targets.length === 0) {
       throw new Error("没有账号可刷新。");
     }
@@ -239,7 +244,10 @@ export async function quotaCommand(
         if (result.quota !== null) {
           context.stdout.write(`已刷新 ${alias}\n`);
         } else {
-          if (state.activeAccount === alias && isTokenInvalidated(result.error)) {
+          if (
+            state.activeAccount === alias &&
+            isTokenInvalidated(result.error)
+          ) {
             await store.setActive(null);
             deactivatedAliases.push(alias);
           }
@@ -259,11 +267,15 @@ export async function quotaCommand(
       context.stderr.write(`部分额度未刷新：\n${warnings.join("\n")}\n`);
     }
     if (deactivatedAliases.length > 0) {
-      context.stderr.write(`已退出 token 失效的账号：${deactivatedAliases.join(", ")}\n`);
+      context.stderr.write(
+        `已退出 token 失效的账号：${deactivatedAliases.join(", ")}\n`,
+      );
     }
 
     const summaries = await store.listSummaries();
-    const selected = summaries.filter((summary) => targets.includes(summary.alias));
+    const selected = summaries.filter((summary) =>
+      targets.includes(summary.alias),
+    );
     context.stdout.write(`\n${renderList(selected)}\n`);
   });
 }
@@ -276,11 +288,11 @@ export async function callCommand(
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
     const allAliases = state.accounts.map((account) => account.alias);
-    const targets = options.aliases ?? (
-      options.select === true
+    const targets =
+      options.aliases ??
+      (options.select === true
         ? await selectAliases(allAliases, "call")
-        : allAliases
-    );
+        : allAliases);
     if (targets.length === 0) {
       throw new Error("没有账号可 call。");
     }
@@ -337,7 +349,10 @@ async function refreshAccountQuota(
       runHome,
       context.cwd,
     );
-    const account = normalizeAccountPlanFromQuota(snapshot.account, snapshot.quota);
+    const account = normalizeAccountPlanFromQuota(
+      snapshot.account,
+      snapshot.quota,
+    );
     await store.writeMeta(
       mergeMeta(alias, await store.readMeta(alias), account, {
         overwritePlanTypeWithNull: true,
@@ -375,7 +390,12 @@ async function callAccount(
   context: CommandContext,
   store: AccountStore,
   call: { alias: string; message: string },
-): Promise<{ alias: string; message: string; reply: string | null; error: string | null }> {
+): Promise<{
+  alias: string;
+  message: string;
+  reply: string | null;
+  error: string | null;
+}> {
   let runHome: string | null = null;
   try {
     await store.requireAccount(call.alias);
@@ -428,9 +448,16 @@ export async function autoQuotaStartCommand(
       intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
       lastTickAt: now.toISOString(),
       nextCheckAt: new Date(
-        now.getTime() + randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS),
+        now.getTime() +
+          randomInt(
+            AUTO_QUOTA_SERVICE_MIN_DELAY_MS,
+            AUTO_QUOTA_SERVICE_MAX_DELAY_MS,
+          ),
       ).toISOString(),
-      lastQuotaFetchAt: startResult.successes.length > 0 ? now.toISOString() : state.lastQuotaFetchAt,
+      lastQuotaFetchAt:
+        startResult.successes.length > 0
+          ? now.toISOString()
+          : state.lastQuotaFetchAt,
       lastFailureByAlias: startResult.failures,
       consecutiveFailureCountByAlias: mergeFailureCounts(
         state.consecutiveFailureCountByAlias,
@@ -444,7 +471,8 @@ export async function autoQuotaStartCommand(
   if (options.startService !== false) {
     await startAutoQuotaService({
       bunBin: options.bunBin ?? process.execPath,
-      scriptPath: options.scriptPath ?? path.resolve(process.argv[1] ?? "src/main.ts"),
+      scriptPath:
+        options.scriptPath ?? path.resolve(process.argv[1] ?? "src/main.ts"),
       cwd: context.cwd,
       appHome: context.appHome,
       codexHome: context.codexHome,
@@ -478,7 +506,10 @@ async function refreshAllQuotaForAutoStart(
   for (const account of state.accounts) {
     const result = await refreshQuotaQuietly(context, store, account.alias);
     if (result.quota === null) {
-      failures[account.alias] = formatAutoQuotaFailure(account.alias, result.error);
+      failures[account.alias] = formatAutoQuotaFailure(
+        account.alias,
+        result.error,
+      );
       continue;
     }
     successes.push(account.alias);
@@ -512,20 +543,25 @@ export async function autoQuotaStatusCommand(
 ): Promise<void> {
   const store = new AccountStore(context.appHome);
   const autoState = await readAutoQuotaState(context.appHome);
-  const serviceStatus = options.recoverService === false
-    ? {
-        serviceRunning: await isAutoQuotaServiceRunning(context.appHome),
-        recovered: false,
-      }
-    : await recoverAutoQuotaServiceIfNeeded(context, autoState);
+  const serviceStatus =
+    options.recoverService === false
+      ? {
+          serviceRunning: await isAutoQuotaServiceRunning(context.appHome),
+          recovered: false,
+        }
+      : await recoverAutoQuotaServiceIfNeeded(context, autoState);
   const summaries = await store.listSummaries();
-  context.stdout.write(`${renderAutoQuotaStatus(autoState, serviceStatus.serviceRunning, summaries)}\n`);
+  context.stdout.write(
+    `${renderAutoQuotaStatus(autoState, serviceStatus.serviceRunning, summaries)}\n`,
+  );
   if (serviceStatus.recovered) {
     context.stdout.write("后台服务已自动恢复。\n");
   }
 }
 
-export async function autoQuotaServiceCommand(context: CommandContext): Promise<void> {
+export async function autoQuotaServiceCommand(
+  context: CommandContext,
+): Promise<void> {
   const stop = (): never => {
     process.exit(0);
   };
@@ -550,10 +586,13 @@ export async function autoQuotaServiceCommand(context: CommandContext): Promise<
 
     await autoQuotaTickCommand(context);
     const now = new Date();
-    const delay = randomInt(AUTO_QUOTA_SERVICE_MIN_DELAY_MS, AUTO_QUOTA_SERVICE_MAX_DELAY_MS);
+    const delay = randomInt(
+      AUTO_QUOTA_SERVICE_MIN_DELAY_MS,
+      AUTO_QUOTA_SERVICE_MAX_DELAY_MS,
+    );
     const nextCheckAt = await resolveNextAutoQuotaCheckAt(context, now, delay);
     await writeAutoQuotaState(context.appHome, {
-      ...await readAutoQuotaState(context.appHome),
+      ...(await readAutoQuotaState(context.appHome)),
       nextCheckAt: nextCheckAt.toISOString(),
     });
     await sleep(Math.max(0, nextCheckAt.getTime() - Date.now()));
@@ -602,7 +641,10 @@ async function resolveNextAutoQuotaCheckAt(
   let nextDueAt: Date | null = null;
   for (const account of accounts) {
     const reset = account.quota?.fiveHour?.resetsAt ?? null;
-    if (reset === null || state.handledFiveHourResets[account.alias] === reset) {
+    if (
+      reset === null ||
+      state.handledFiveHourResets[account.alias] === reset
+    ) {
       continue;
     }
     const dueAt = schedule.get(account.alias);
@@ -620,7 +662,9 @@ async function resolveNextAutoQuotaCheckAt(
   return randomCheckAt;
 }
 
-export async function autoQuotaTickCommand(context: CommandContext): Promise<void> {
+export async function autoQuotaTickCommand(
+  context: CommandContext,
+): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const current = await readAutoQuotaState(context.appHome);
@@ -650,11 +694,18 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       recoveredAliases.push(alias);
       const reset = quota.fiveHour?.resetsAt ?? null;
       const resetTime = reset === null ? null : new Date(reset);
-      if (reset === null || resetTime === null || Number.isNaN(resetTime.getTime())) {
+      if (
+        reset === null ||
+        resetTime === null ||
+        Number.isNaN(resetTime.getTime())
+      ) {
         failures[alias] = "缺少 5h 重置时间。";
         continue;
       }
-      if (handledFiveHourResets[alias] !== undefined && handledFiveHourResets[alias] !== reset) {
+      if (
+        handledFiveHourResets[alias] !== undefined &&
+        handledFiveHourResets[alias] !== reset
+      ) {
         delete handledFiveHourResets[alias];
       }
       quotaByAlias.set(alias, quota);
@@ -715,7 +766,8 @@ export async function autoQuotaTickCommand(context: CommandContext): Promise<voi
       intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
       lastTickAt: now.toISOString(),
       nextCheckAt: current.nextCheckAt,
-      lastQuotaFetchAt: quotaFetches.length > 0 ? now.toISOString() : current.lastQuotaFetchAt,
+      lastQuotaFetchAt:
+        quotaFetches.length > 0 ? now.toISOString() : current.lastQuotaFetchAt,
       lastCallAt: successes.length > 0 ? now.toISOString() : current.lastCallAt,
       lastSuccessAliases: successes,
       lastFailureByAlias: failures,
@@ -755,13 +807,22 @@ async function isAutoCallEligibleAccount(
 ): Promise<boolean> {
   const meta = await store.readMeta(alias);
   const quota = await store.readQuota(alias);
-  if (isStaleSubscriptionPlan(meta?.planType ?? null, meta?.subscriptionExpiresAt ?? null, quota)) {
+  if (
+    isStaleSubscriptionPlan(
+      meta?.planType ?? null,
+      meta?.subscriptionExpiresAt ?? null,
+      quota,
+    )
+  ) {
     return false;
   }
   return isSubscriptionPlan(meta?.planType ?? null);
 }
 
-async function waitBeforeQuotaRefresh(index: number, total: number): Promise<void> {
+async function waitBeforeQuotaRefresh(
+  index: number,
+  total: number,
+): Promise<void> {
   if (index === 0 || total <= 1) return;
   const override = process.env.CXA_QUOTA_REFRESH_DELAY_MS;
   if (override !== undefined) {
@@ -771,7 +832,9 @@ async function waitBeforeQuotaRefresh(index: number, total: number): Promise<voi
       return;
     }
   }
-  await sleep(randomInt(QUOTA_REFRESH_MIN_DELAY_MS, QUOTA_REFRESH_MAX_DELAY_MS));
+  await sleep(
+    randomInt(QUOTA_REFRESH_MIN_DELAY_MS, QUOTA_REFRESH_MAX_DELAY_MS),
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -802,7 +865,9 @@ export async function refreshCommand(
     const expectedEmail = existingMeta?.email ?? emailFromAlias(target);
 
     await mkdir(runsRoot(context.appHome), { recursive: true });
-    const refreshHome = await mkdtemp(path.join(runsRoot(context.appHome), "refresh-"));
+    const refreshHome = await mkdtemp(
+      path.join(runsRoot(context.appHome), "refresh-"),
+    );
     try {
       const refreshAuth = path.join(refreshHome, "auth.json");
       await runCodexLogin(context.codexBin, refreshHome, context.cwd);
@@ -826,7 +891,9 @@ export async function refreshCommand(
   });
 }
 
-export async function subscriptionCommand(context: CommandContext): Promise<void> {
+export async function subscriptionCommand(
+  context: CommandContext,
+): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
@@ -905,10 +972,7 @@ export async function resolveAccountTarget(
   return selectAlias(aliases, action);
 }
 
-function requireAccountTarget(
-  target: string | null,
-  message: string,
-): string {
+function requireAccountTarget(target: string | null, message: string): string {
   if (target === null) {
     throw new Error(message);
   }
@@ -955,7 +1019,9 @@ function parseSubscriptionDate(value: string): string {
   return date.endOf("day").toDate().toISOString();
 }
 
-function validateSubscriptionDate(value: string | undefined): string | undefined {
+function validateSubscriptionDate(
+  value: string | undefined,
+): string | undefined {
   try {
     if (value === undefined) return "请输入订阅日期。";
     parseSubscriptionDate(value);
@@ -994,7 +1060,13 @@ function normalizeAccountPlanFromQuota(
   planType: string | null;
   subscriptionExpiresAt: string | null;
 } {
-  if (isStaleSubscriptionPlan(account.planType, account.subscriptionExpiresAt, quota)) {
+  if (
+    isStaleSubscriptionPlan(
+      account.planType,
+      account.subscriptionExpiresAt,
+      quota,
+    )
+  ) {
     return {
       ...account,
       planType: "free",
@@ -1017,14 +1089,19 @@ function isStaleSubscriptionPlan(
 }
 
 function hasUsableWeeklyQuota(quota: AccountQuota): boolean {
-  return quota.weekly?.percentLeft !== null && quota.weekly?.percentLeft !== undefined;
+  return (
+    quota.weekly?.percentLeft !== null &&
+    quota.weekly?.percentLeft !== undefined
+  );
 }
 
 function formatQuotaWarning(alias: string, error: string | null): string {
   if (isTokenInvalidated(error)) {
     return `${alias}: token 已失效。运行 cxa refresh ${alias}。`;
   }
-  const firstLine = error?.split(/\r?\n/).find((line) => line.trim().length > 0);
+  const firstLine = error
+    ?.split(/\r?\n/)
+    .find((line) => line.trim().length > 0);
   return `${alias}: ${firstLine ?? "读取额度失败"}`;
 }
 
@@ -1054,7 +1131,9 @@ function renderAutoQuotaStatus(
   ];
 
   if (state.lastCallAt !== null) {
-    lines.push(`${chalk.bold("上次触发重置：")}${chalk.dim(formatFriendlyTime(state.lastCallAt))}`);
+    lines.push(
+      `${chalk.bold("上次触发重置：")}${chalk.dim(formatFriendlyTime(state.lastCallAt))}`,
+    );
     if (state.lastSuccessAliases.length > 0) {
       lines.push(`  ${chalk.green("已触发：")}`);
       for (const alias of state.lastSuccessAliases) {
@@ -1079,10 +1158,13 @@ function renderAutoQuotaStatus(
     const width = maxTextWidth(failures.map(([alias]) => alias));
     for (const [alias, reason] of failures) {
       const count = state.consecutiveFailureCountByAlias[alias] ?? 1;
-      const detail = count >= 3
-        ? `${reason} 连续失败 ${count} 次，已暂停。修复后会自动恢复。`
-        : `${reason} 连续失败 ${count} 次，下次再试。`;
-      lines.push(`  ${chalk.yellow(padText(alias, width))}  ${chalk.dim(detail)}`);
+      const detail =
+        count >= 3
+          ? `${reason} 连续失败 ${count} 次，已暂停。修复后会自动恢复。`
+          : `${reason} 连续失败 ${count} 次，下次再试。`;
+      lines.push(
+        `  ${chalk.yellow(padText(alias, width))}  ${chalk.dim(detail)}`,
+      );
     }
     lines.push("");
     lines.push(chalk.dim("其他账号不受影响。"));
@@ -1094,7 +1176,10 @@ function renderAutoQuotaStatus(
       reset: parseDate(summary.quota?.fiveHour?.resetsAt ?? null),
       rawReset: summary.quota?.fiveHour?.resetsAt ?? null,
     }))
-    .filter((item): item is { alias: string; reset: Date; rawReset: string } => item.reset !== null && item.rawReset !== null);
+    .filter(
+      (item): item is { alias: string; reset: Date; rawReset: string } =>
+        item.reset !== null && item.rawReset !== null,
+    );
   const nextSchedule = buildAutoQuotaSchedule(
     nextRawItems.map((item) => ({ alias: item.alias, reset: item.rawReset })),
   );
@@ -1176,7 +1261,7 @@ function stableHash(value: string): number {
 }
 
 function stableRandomInt(value: string, min: number, max: number): number {
-  return min + stableHash(value) % (max - min + 1);
+  return min + (stableHash(value) % (max - min + 1));
 }
 
 function maxTextWidth(values: string[]): number {
@@ -1199,8 +1284,16 @@ function formatFriendlyTime(value: string | null): string {
   const date = parseDate(value);
   if (date === null) return "还没有记录";
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const startOfDate = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
   const dayDelta = Math.round((startOfDate - startOfToday) / 86_400_000);
   const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
   if (dayDelta === 0) return `今天 ${time}`;
@@ -1213,14 +1306,18 @@ function formatNextCheckTime(state: AutoQuotaState): string {
   if (state.nextCheckAt !== null) {
     const nextCheckAt = parseDate(state.nextCheckAt);
     if (nextCheckAt === null) return "还没有记录";
-    if (nextCheckAt.getTime() <= Date.now()) return "等待后台服务执行";
+    if (nextCheckAt.getTime() <= Date.now()) return "后台服务异常";
     return formatFriendlyTime(state.nextCheckAt);
   }
   if (!state.enabled || state.lastTickAt === null) return "还没有记录";
   const lastTickAt = parseDate(state.lastTickAt);
   if (lastTickAt === null) return "还没有记录";
-  const min = new Date(lastTickAt.getTime() + AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000);
-  const max = new Date(lastTickAt.getTime() + AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000);
+  const min = new Date(
+    lastTickAt.getTime() + AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000,
+  );
+  const max = new Date(
+    lastTickAt.getTime() + AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000,
+  );
   return `${formatFriendlyTime(min.toISOString())} - ${formatFriendlyTime(max.toISOString())}`;
 }
 
@@ -1229,7 +1326,9 @@ function pad(value: number): string {
 }
 
 function isTokenInvalidated(error: string | null): boolean {
-  return Boolean(error?.includes("token_invalidated") || error?.includes("401 Unauthorized"));
+  return Boolean(
+    error?.includes("token_invalidated") || error?.includes("401 Unauthorized"),
+  );
 }
 
 function pickCallMessage(): string {
@@ -1249,28 +1348,36 @@ function formatCallFailure(alias: string, error: unknown): string {
 
 function isAuthFailure(message: string): boolean {
   const lower = message.toLowerCase();
-  return lower.includes("auth required") ||
+  return (
+    lower.includes("auth required") ||
     lower.includes("not logged in") ||
     lower.includes("login required") ||
     lower.includes("authentication") ||
-    lower.includes("session expired");
+    lower.includes("session expired")
+  );
 }
 
 function isQuotaFailure(message: string): boolean {
   const lower = message.toLowerCase();
-  return lower.includes("usage limit reached") ||
+  return (
+    lower.includes("usage limit reached") ||
     lower.includes("usage limit") ||
     lower.includes("workspace credit limit") ||
     lower.includes("credit limit") ||
     lower.includes("out of credits") ||
     lower.includes("reached your") ||
     lower.includes("rate limit") ||
-    lower.includes("quota");
+    lower.includes("quota")
+  );
 }
 
 function firstMeaningfulLine(message: string): string {
-  return message.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ??
-    "未知错误";
+  return (
+    message
+      .split(/\r?\n/)
+      .find((line) => line.trim().length > 0)
+      ?.trim() ?? "未知错误"
+  );
 }
 
 function emailFromAlias(alias: string): string | null {
@@ -1295,9 +1402,7 @@ async function assertRefreshTarget(
   }
 
   if (account.email !== null) {
-    const ok = await confirm(
-      `用 ${account.email} 刷新 ${alias}？`,
-    );
+    const ok = await confirm(`用 ${account.email} 刷新 ${alias}？`);
     if (!ok) throw new Error("已取消。");
   }
 }

@@ -2,8 +2,15 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathExists, removePath } from "./fs.ts";
+import {
+  AUTO_QUOTA_MIN_INTERVAL_MINUTES,
+  writeAutoQuotaState,
+} from "./auto-quota.ts";
 import { autoQuotaPidPath } from "./paths.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
+
+const AUTO_QUOTA_RECOVERY_DELAY_MS = AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000;
+const AUTO_QUOTA_RECOVERY_GRACE_MS = 60_000;
 
 export async function startAutoQuotaService(options: {
   bunBin: string;
@@ -67,8 +74,22 @@ export async function recoverAutoQuotaServiceIfNeeded(
     };
   }
 
-  if (await isAutoQuotaServiceRunning(context.appHome)) {
+  const serviceRunning = await isAutoQuotaServiceRunning(context.appHome);
+  const missedCheckCount = resolveMissedCheckCount(state, new Date());
+  if (serviceRunning && missedCheckCount === null) {
     return { serviceRunning: true, recovered: false };
+  }
+
+  if (missedCheckCount !== null) {
+    const now = new Date();
+    await writeAutoQuotaState(context.appHome, {
+      ...state,
+      lastWakeAt: now.toISOString(),
+      lastMissedCheckCount: missedCheckCount,
+      nextCheckAt: new Date(
+        now.getTime() + AUTO_QUOTA_RECOVERY_DELAY_MS,
+      ).toISOString(),
+    });
   }
 
   await startAutoQuotaService({
@@ -84,6 +105,18 @@ export async function recoverAutoQuotaServiceIfNeeded(
     serviceRunning: await isAutoQuotaServiceRunning(context.appHome),
     recovered: true,
   };
+}
+
+function resolveMissedCheckCount(
+  state: AutoQuotaState,
+  now: Date,
+): number | null {
+  if (!state.enabled || state.nextCheckAt === null) return null;
+  const nextCheckAt = new Date(state.nextCheckAt);
+  if (Number.isNaN(nextCheckAt.getTime())) return null;
+  const lateMs = now.getTime() - nextCheckAt.getTime();
+  if (lateMs < AUTO_QUOTA_RECOVERY_GRACE_MS) return null;
+  return Math.max(1, Math.floor(lateMs / AUTO_QUOTA_RECOVERY_DELAY_MS));
 }
 
 async function readAutoQuotaPid(appHome: string): Promise<number | null> {

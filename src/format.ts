@@ -12,6 +12,9 @@ export function sortAccountsForList(accounts: AccountSummary[]): AccountSummary[
   return accounts
     .map((account, index) => ({ account, index }))
     .sort((left, right) => {
+      const zeroQuotaDelta = Number(hasZeroQuota(left.account)) - Number(hasZeroQuota(right.account));
+      if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
+
       const activeDelta = Number(right.account.isActive) - Number(left.account.isActive);
       if (activeDelta !== 0) return activeDelta;
 
@@ -19,13 +22,23 @@ export function sortAccountsForList(accounts: AccountSummary[]): AccountSummary[
         limitSortValue(right.account.quota?.fiveHour ?? null) - limitSortValue(left.account.quota?.fiveHour ?? null);
       if (fiveHourDelta !== 0) return fiveHourDelta;
 
-      const weeklyDelta =
-        limitSortValue(right.account.quota?.weekly ?? null) - limitSortValue(left.account.quota?.weekly ?? null);
-      if (weeklyDelta !== 0) return weeklyDelta;
+      const subscriptionDelta = subscriptionSortValue(left.account) - subscriptionSortValue(right.account);
+      if (subscriptionDelta !== 0) return subscriptionDelta;
 
       return left.index - right.index;
     })
     .map(({ account }) => account);
+}
+
+function hasZeroQuota(account: AccountSummary): boolean {
+  return account.quota?.fiveHour?.percentLeft === 0 || account.quota?.weekly?.percentLeft === 0;
+}
+
+function subscriptionSortValue(account: AccountSummary): number {
+  const value = account.meta?.subscriptionExpiresAt ?? null;
+  if (value === null || value.trim().length === 0) return Number.POSITIVE_INFINITY;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
 }
 
 function renderAccount(account: AccountSummary): string {

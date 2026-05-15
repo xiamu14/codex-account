@@ -130,21 +130,37 @@ describe('renderList', () => {
 });
 
 describe('sortAccountsForList', () => {
-  test('orders active first, then by 5h limit, then by weekly limit', () => {
+  test('orders active first, then by 5h limit, then by subscription date', () => {
     const accounts: AccountSummary[] = [
       makeSummary('unknown'),
-      makeSummary('weekly-winner', false, 50, 90),
-      makeSummary('five-hour-winner', false, 80, 10),
-      makeSummary('active-low', true, 1, 1),
-      makeSummary('weekly-loser', false, 50, 20)
+      makeSummary('later-subscription', false, 50, 90, '2026-06-10T00:00:00.000Z'),
+      makeSummary('five-hour-winner', false, 80, 10, '2026-06-20T00:00:00.000Z'),
+      makeSummary('active-low', true, 1, 1, '2026-07-01T00:00:00.000Z'),
+      makeSummary('earlier-subscription', false, 50, 20, '2026-05-17T00:00:00.000Z')
     ];
 
     expect(sortAccountsForList(accounts).map((account) => account.alias)).toEqual([
       'active-low',
       'five-hour-winner',
-      'weekly-winner',
-      'weekly-loser',
+      'earlier-subscription',
+      'later-subscription',
       'unknown'
+    ]);
+  });
+
+  test('keeps accounts with zero 5h or weekly limit at the end', () => {
+    const accounts: AccountSummary[] = [
+      makeSummary('zero-weekly-active', true, 99, 0, '2026-05-17T00:00:00.000Z'),
+      makeSummary('normal-active', true, 20, 20, '2026-06-01T00:00:00.000Z'),
+      makeSummary('normal-high', false, 95, 50, '2026-06-10T00:00:00.000Z'),
+      makeSummary('zero-five-hour', false, 0, 100, '2026-05-16T00:00:00.000Z')
+    ];
+
+    expect(sortAccountsForList(accounts).map((account) => account.alias)).toEqual([
+      'normal-active',
+      'normal-high',
+      'zero-weekly-active',
+      'zero-five-hour'
     ]);
   });
 });
@@ -153,7 +169,8 @@ function makeSummary(
   alias: string,
   isActive = false,
   fiveHour: number | null = null,
-  weekly: number | null = null
+  weekly: number | null = null,
+  subscriptionExpiresAt: string | null = null
 ): AccountSummary {
   return {
     alias,
@@ -163,7 +180,7 @@ function makeSummary(
       alias,
       email: alias,
       planType: 'plus',
-      subscriptionExpiresAt: null,
+      subscriptionExpiresAt,
       createdAt: '2026-05-11T00:00:00.000Z',
       updatedAt: '2026-05-11T00:00:00.000Z'
     },

@@ -8,6 +8,7 @@ import {
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
   readAutoQuotaState,
 } from "./auto-quota.ts";
+import { quotaCommand } from "./commands.ts";
 import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
 import { AccountStore } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
@@ -17,6 +18,7 @@ const UI_APP_PORT = 41_739;
 const PORTLESS_PROXY_PORT = 1_355;
 const PORTLESS_NAME = "codexaccount";
 const UI_EVENT_INTERVAL_MS = 5_000;
+const UI_EVENT_HEARTBEAT_DATA = "ok";
 const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
 const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
 
@@ -36,6 +38,14 @@ export async function uiCommand(
 
   app.get("/", async (c) => c.html(await readIndexHtml(indexPath)));
   app.get("/api/status", async (c) => c.json(await readStatus(context)));
+  app.post("/api/quota/retry", async (c) => {
+    try {
+      await quotaCommand(context);
+      return c.json(await readStatus(context));
+    } catch (error) {
+      return c.text(error instanceof Error ? error.message : String(error), 500);
+    }
+  });
   app.get("/api/events", (c) =>
     streamSSE(c, async (stream) => {
       let lastSignature = "";
@@ -47,6 +57,11 @@ export async function uiCommand(
           await stream.writeSSE({
             event: "status",
             data: signature,
+          });
+        } else {
+          await stream.writeSSE({
+            event: "heartbeat",
+            data: UI_EVENT_HEARTBEAT_DATA,
           });
         }
         await stream.sleep(UI_EVENT_INTERVAL_MS);
@@ -140,7 +155,7 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
 
 async function readStatus(context: CommandContext): Promise<UiStatus> {
   const store = new AccountStore(context.appHome);
-  const [accounts, autoState] = await Promise.all([
+  let [accounts, autoState] = await Promise.all([
     store.listSummaries(),
     readAutoQuotaState(context.appHome),
   ]);
@@ -148,6 +163,12 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
     context,
     autoState,
   );
+  if (serviceStatus.recovered) {
+    [accounts, autoState] = await Promise.all([
+      store.listSummaries(),
+      readAutoQuotaState(context.appHome),
+    ]);
+  }
   const schedule = buildAutoQuotaSchedule(
     accounts
       .map((account) => ({
@@ -224,7 +245,7 @@ function resolveHealthMessage(
   if (!serviceRunning) return "后台服务未运行，定时检查不会执行。";
   if (missed > 0) return `后台检查已延迟，可能错过 ${missed} 个检查周期。`;
   if (isNextCheckOverdue(state, new Date()))
-    return "计划检查时间已过，等待后台服务执行。";
+    return "计划检查时间已过，后台服务异常。";
   return "后台服务在线，定时检查正常。";
 }
 
@@ -285,7 +306,7 @@ function resolveNextCheckAt(state: AutoQuotaState): string | null {
   if (state.nextCheckAt !== null) {
     const nextCheckAt = new Date(state.nextCheckAt);
     if (Number.isNaN(nextCheckAt.getTime())) return null;
-    if (nextCheckAt.getTime() <= Date.now()) return "等待后台服务执行";
+    if (nextCheckAt.getTime() <= Date.now()) return "后台服务异常";
     return state.nextCheckAt;
   }
   if (!state.enabled || state.lastTickAt === null) return null;

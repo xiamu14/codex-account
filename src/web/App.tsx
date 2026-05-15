@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { UiStatus } from "../ui-status.ts";
 import * as Badge from "./components/ui/badge.tsx";
+import * as Button from "./components/ui/button.tsx";
 import * as Divider from "./components/ui/divider.tsx";
 import * as ProgressBar from "./components/ui/progress-bar.tsx";
 import { toast, Toaster } from "./components/ui/toast.tsx";
@@ -15,9 +16,11 @@ type LoadState =
 
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  const [isRetryingQuota, setIsRetryingQuota] = useState(false);
 
   useEffect(() => {
     let mounted = true;
+
     fetchStatus()
       .then((status) => {
         if (mounted) setState({ kind: "ready", status });
@@ -34,6 +37,7 @@ export function App() {
 
     const source = new EventSource("/api/events");
     source.addEventListener("status", (event) => {
+      if (!mounted) return;
       try {
         const status = JSON.parse(event.data) as UiStatus;
         setState({ kind: "ready", status });
@@ -67,10 +71,53 @@ export function App() {
       </Shell>
     );
   }
-  return <Dashboard status={state.status} />;
+  return (
+    <Dashboard
+      isRetryingQuota={isRetryingQuota}
+      onRetryQuota={async () => {
+        setIsRetryingQuota(true);
+        try {
+          const status = await retryQuota();
+          setState({ kind: "ready", status });
+          toast.custom(
+            (t) => (
+              <ToastAlert.Root
+                message="已重新刷新额度。"
+                status="success"
+                t={t}
+              />
+            ),
+            { duration: 4_000 },
+          );
+        } catch (error) {
+          toast.custom(
+            (t) => (
+              <ToastAlert.Root
+                message={errorMessage(error)}
+                status="error"
+                t={t}
+              />
+            ),
+            { duration: 5_000 },
+          );
+        } finally {
+          setIsRetryingQuota(false);
+        }
+      }}
+      status={state.status}
+    />
+  );
 }
 
-function Dashboard({ status }: { status: UiStatus }) {
+function Dashboard({
+  isRetryingQuota,
+  onRetryQuota,
+  status,
+}: {
+  isRetryingQuota: boolean;
+  onRetryQuota: () => Promise<void>;
+  status: UiStatus;
+}) {
   const failures = Object.entries(status.quota.lastFailureByAlias);
 
   return (
@@ -79,12 +126,19 @@ function Dashboard({ status }: { status: UiStatus }) {
         <AccountsCard accounts={status.accounts} />
       </section>
       <section className="grid content-start gap-4">
-        <QuotaStatusCard quota={status.quota} />
-        <QuotaRefreshCard accounts={status.accounts} />
+        <QuotaRefreshCard
+          accounts={status.accounts}
+          nextQuotaFetchAt={status.quota.nextCheckAt}
+        />
         <QuotaResetCard accounts={status.accounts} />
       </section>
       <section className="grid content-start gap-4">
-        <FailuresCard failures={failures} />
+        <QuotaStatusCard quota={status.quota} />
+        <FailuresCard
+          failures={failures}
+          isRetrying={isRetryingQuota}
+          onRetry={onRetryQuota}
+        />
       </section>
       <QuotaToasts quota={status.quota} />
       <Toaster />
@@ -137,7 +191,13 @@ function QuotaStatusCard({ quota }: { quota: UiStatus["quota"] }) {
   );
 }
 
-function QuotaRefreshCard({ accounts }: { accounts: UiStatus["accounts"] }) {
+function QuotaRefreshCard({
+  accounts,
+  nextQuotaFetchAt,
+}: {
+  accounts: UiStatus["accounts"];
+  nextQuotaFetchAt: string | null;
+}) {
   const refreshedCount = accounts.filter(
     (account) => account.lastQuotaFetchAt !== null,
   ).length;
@@ -148,7 +208,7 @@ function QuotaRefreshCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         <div>
           <div className="text-label-lg text-text-strong-950">额度刷新</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            显示 quota 更新时间和下次刷新时间
+            额度更新时间和下次刷新时间
           </div>
         </div>
         <MetadataBadge color="blue" label={`${refreshedCount}`} />
@@ -158,14 +218,14 @@ function QuotaRefreshCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         {accounts.map((account) => (
           <AccountStatusRow
             key={account.alias}
-            description={`下次刷新：${formatDateTime(account.nextRefreshAt)}`}
+            description={`下次刷新：${formatDateTime(nextQuotaFetchAt)}`}
             label={account.alias}
             status={
               account.lastQuotaFetchAt === null
                 ? { color: "gray", label: "waiting" }
                 : { color: "green", label: "updated" }
             }
-            value={formatDateTime(account.lastQuotaFetchAt)}
+            value={""}
           />
         ))}
       </div>
@@ -184,7 +244,7 @@ function QuotaResetCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         <div>
           <div className="text-label-lg text-text-strong-950">额度重置</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            显示 call 触发状态
+            额度重置触发状态
           </div>
         </div>
         <MetadataBadge color="purple" label={`${successCount}`} />
@@ -288,18 +348,68 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
           </div>
         ) : (
           <div className="px-4">
-            {accounts.map((account, index) => (
-              <AccountRow
-                account={account}
-                isLast={index === accounts.length - 1}
-                key={account.alias}
-              />
-            ))}
+            {sortAccountsForDisplay(accounts).map(
+              (account, index, sortedAccounts) => (
+                <AccountRow
+                  account={account}
+                  isLast={index === sortedAccounts.length - 1}
+                  key={account.alias}
+                />
+              ),
+            )}
           </div>
         )}
       </div>
     </Card>
   );
+}
+
+function sortAccountsForDisplay(
+  accounts: UiStatus["accounts"],
+): UiStatus["accounts"] {
+  return accounts
+    .map((account, index) => ({ account, index }))
+    .sort((left, right) => {
+      const zeroQuotaDelta =
+        Number(hasZeroQuota(left.account)) -
+        Number(hasZeroQuota(right.account));
+      if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
+
+      const activeDelta =
+        Number(right.account.isActive) - Number(left.account.isActive);
+      if (activeDelta !== 0) return activeDelta;
+
+      const fiveHourDelta =
+        limitSortValue(right.account.quota?.fiveHour?.percentLeft ?? null) -
+        limitSortValue(left.account.quota?.fiveHour?.percentLeft ?? null);
+      if (fiveHourDelta !== 0) return fiveHourDelta;
+
+      const subscriptionDelta =
+        subscriptionSortValue(left.account.subscriptionExpiresAt) -
+        subscriptionSortValue(right.account.subscriptionExpiresAt);
+      if (subscriptionDelta !== 0) return subscriptionDelta;
+
+      return left.index - right.index;
+    })
+    .map(({ account }) => account);
+}
+
+function hasZeroQuota(account: UiStatus["accounts"][number]): boolean {
+  return (
+    account.quota?.fiveHour?.percentLeft === 0 ||
+    account.quota?.weekly?.percentLeft === 0
+  );
+}
+
+function limitSortValue(value: number | null): number {
+  return value ?? -1;
+}
+
+function subscriptionSortValue(value: string | null): number {
+  if (value === null || value.trim().length === 0)
+    return Number.POSITIVE_INFINITY;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
 }
 
 function AccountRow({
@@ -316,7 +426,7 @@ function AccountRow({
     <>
       <article className="bg-bg-white-0">
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
+          <div className="min-w-0 w-full">
             <div className="flex items-center gap-2">
               <div className="truncate text-label-md text-text-strong-950">
                 {account.alias}
@@ -324,6 +434,12 @@ function AccountRow({
               {account.isActive ? (
                 <MetadataBadge color="green" label="active" />
               ) : null}
+              <PlanBadge planType={account.planType} />
+              <div className="flex-1"></div>
+
+              <div className="text-paragraph-xs text-text-sub-600">
+                <span>{formatDate(account.subscriptionExpiresAt)}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -343,16 +459,6 @@ function AccountRow({
             />
           ) : null}
         </div>
-        <div className="mt-4 grid gap-2 text-paragraph-xs text-text-sub-600 sm:grid-cols-3">
-          <span className="flex items-center gap-2">
-            plan:
-            <PlanBadge planType={account.planType} />
-          </span>
-          <span>subscription: {formatDate(account.subscriptionExpiresAt)}</span>
-          <span>
-            updated: {formatDateTime(account.quota?.updatedAt ?? null)}
-          </span>
-        </div>
       </article>
       {isLast ? null : (
         <div className="my-5 border-t border-dashed border-stroke-soft-200" />
@@ -361,7 +467,17 @@ function AccountRow({
   );
 }
 
-function FailuresCard({ failures }: { failures: Array<[string, string]> }) {
+function FailuresCard({
+  failures,
+  isRetrying,
+  onRetry,
+}: {
+  failures: Array<[string, string]>;
+  isRetrying: boolean;
+  onRetry: () => Promise<void>;
+}) {
+  const hasFailures = failures.length > 0;
+
   return (
     <Card>
       <div className="flex items-center justify-between gap-4">
@@ -372,21 +488,61 @@ function FailuresCard({ failures }: { failures: Array<[string, string]> }) {
         />
       </div>
       <Divider.Root className="my-5" />
-      <div className="grid gap-3">
-        {failures.length === 0 ? (
-          <div className="text-paragraph-sm text-text-sub-600"></div>
-        ) : (
-          failures.map(([alias, reason]) => (
-            <div className="rounded-20 bg-error-lighter p-3" key={alias}>
-              <div className="text-label-sm text-error-base">{alias}</div>
-              <div className="mt-1 text-paragraph-xs text-text-sub-600">
-                {reason}
+      {hasFailures ? (
+        <>
+          <div className="grid gap-3">
+            {failures.map(([alias, reason]) => (
+              <div
+                className="flex items-start gap-3 rounded-10 border border-stroke-soft-200 bg-bg-white-0 px-1 py-2"
+                key={alias}
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1.5 size-1.5 shrink-0 rounded-full bg-error-base"
+                />
+                <div className="min-w-0">
+                  <div className="truncate text-label-sm text-text-strong-950">
+                    {alias}
+                  </div>
+                  {formatFailureReason(reason) === "" ? null : (
+                    <div className="mt-0.5 text-paragraph-xs text-text-sub-600">
+                      {formatFailureReason(reason)}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
-        )}
-      </div>
+            ))}
+          </div>
+          <Divider.Root className="my-5" />
+          <Button.Root
+            aria-busy={isRetrying}
+            className="w-full"
+            disabled={isRetrying}
+            mode="stroke"
+            onClick={() => {
+              void onRetry();
+            }}
+            variant="neutral"
+          >
+            重试
+          </Button.Root>
+        </>
+      ) : (
+        <EmptyStateImage />
+      )}
     </Card>
+  );
+}
+
+function EmptyStateImage() {
+  return (
+    <div className="flex justify-center py-1.5">
+      <img
+        alt=""
+        className="h-[60px] w-auto"
+        src="/assets/undraw_searching-everywhere_tffi.svg"
+      />
+    </div>
   );
 }
 
@@ -411,7 +567,7 @@ function QuotaBlock({
       </div>
       <ProgressBar.Root color={tone.progressColor} value={percent ?? 0} />
       <div className="mt-2 text-paragraph-xs text-text-sub-600">
-        reset: {formatDateTime(resetAt)}
+        重置: {formatDateTime(resetAt)}
       </div>
     </div>
   );
@@ -550,6 +706,21 @@ async function fetchStatus(): Promise<UiStatus> {
     throw new Error(`状态读取失败：${response.status}`);
   }
   return (await response.json()) as UiStatus;
+}
+
+async function retryQuota(): Promise<UiStatus> {
+  const response = await fetch("/api/quota/retry", { method: "POST" });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message.trim() || `重试失败：${response.status}`);
+  }
+  return (await response.json()) as UiStatus;
+}
+
+function formatFailureReason(value: string): string {
+  const normalized = value.trim().replace(/[。.]$/, "");
+  if (normalized === "读取额度失败") return "";
+  return value;
 }
 
 function formatDateTime(value: string | null): string {
