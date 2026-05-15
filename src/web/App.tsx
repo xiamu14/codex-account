@@ -190,7 +190,7 @@ function Dashboard({
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto grid min-h-screen w-full grid-cols-1 gap-4 bg-bg-weak-50 p-8  font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_360px_420px]  ">
+    <main className="mx-auto grid min-h-screen w-full grid-cols-1 gap-4 bg-bg-weak-50 p-8 lg:px-[100px]  font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_400px_420px]  ">
       {children}
     </main>
   );
@@ -250,7 +250,7 @@ function QuotaRefreshCard({
         <div>
           <div className="text-label-lg text-text-strong-950">额度刷新</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            额度更新时间和下次刷新时间
+            额度刷新时间
           </div>
         </div>
         <MetadataBadge color="blue" label={`${refreshedCount}`} />
@@ -339,14 +339,7 @@ function AccountResetRow({
 }) {
   const plan = formatPlan(account.planType);
   if (plan === "free") {
-    return (
-      <AccountStatusRow
-        description="free plan 不加入自动 call 重置额度。"
-        label={account.alias}
-        status={{ color: "gray", label: "free" }}
-        value="跳过"
-      />
-    );
+    return null;
   }
 
   if (account.lastCallStatus === "success") {
@@ -542,14 +535,16 @@ function AccountRow({
               <PlanBadge planType={account.planType} />
               <div className="flex-1"></div>
 
-              <div className="text-paragraph-xs text-text-sub-600">
-                <span>{formatDate(account.subscriptionExpiresAt)}</span>
-              </div>
+              {account.subscriptionExpiresAt ? (
+                <div className="text-paragraph-xs text-text-sub-600">
+                  <span>{formatDate(account.subscriptionExpiresAt)}</span>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
         <div
-          className={`mt-4 grid gap-3 ${weeklyQuota !== null ? "md:grid-cols-2" : ""}`}
+          className={`mt-4 grid gap-4 ${weeklyQuota !== null ? "md:grid-cols-2" : ""}`}
         >
           <QuotaBlock
             label="5h limit"
