@@ -94,7 +94,7 @@ function Dashboard({ status }: { status: UiStatus }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto grid min-h-screen w-full grid-cols-1 gap-4 bg-bg-weak-50 py-8 px-[160px] font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_360px_420px]  ">
+    <main className="mx-auto grid min-h-screen w-full grid-cols-1 gap-4 bg-bg-weak-50 p-8  font-sans text-text-strong-950 antialiased lg:grid-cols-[minmax(0,1fr)_360px_420px]  ">
       {children}
     </main>
   );
@@ -118,18 +118,18 @@ function QuotaStatusCard({ quota }: { quota: UiStatus["quota"] }) {
       <Divider.Root className="my-5" />
       <div className="grid gap-3">
         <StatusDetailRow
-          description="后台服务每次醒来都会检查账号 quota 和 5h reset 时间。"
+          description="自动检查账号 quota 和 5h reset 时间。"
           label="运行间隔"
           value={quota.checkIntervalText}
         />
         <StatusDetailRow
-          description="最近一次自动任务完成检查的时间。"
-          label="上次检查"
+          description=""
+          label="最近任务"
           value={formatDateTime(quota.lastTickAt)}
         />
         <StatusDetailRow
-          description="后台服务下一次计划开始检查的时间。"
-          label="下次检查"
+          description=""
+          label="下次任务"
           value={formatDateTime(quota.nextCheckAt)}
         />
       </div>
@@ -148,7 +148,7 @@ function QuotaRefreshCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         <div>
           <div className="text-label-lg text-text-strong-950">额度刷新</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            按账号显示 quota 更新时间和下次刷新时间
+            显示 quota 更新时间和下次刷新时间
           </div>
         </div>
         <MetadataBadge color="blue" label={`${refreshedCount}`} />
@@ -184,7 +184,7 @@ function QuotaResetCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         <div>
           <div className="text-label-lg text-text-strong-950">额度重置</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            按账号显示 call 触发状态
+            显示 call 触发状态
           </div>
         </div>
         <MetadataBadge color="purple" label={`${successCount}`} />
@@ -260,7 +260,7 @@ function AccountResetRow({
 
   return (
     <AccountStatusRow
-      description={`等待下次额度刷新窗口：${formatDateTime(account.nextRefreshAt)}`}
+      description={`下次重置：${formatDateTime(account.nextRefreshAt)}`}
       label={account.alias}
       status={{ color: "gray", label: "waiting" }}
       value="暂无"
@@ -287,13 +287,15 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
             还没有保存账号
           </div>
         ) : (
-          accounts.map((account, index) => (
-            <AccountRow
-              account={account}
-              isLast={index === accounts.length - 1}
-              key={account.alias}
-            />
-          ))
+          <div className="px-4">
+            {accounts.map((account, index) => (
+              <AccountRow
+                account={account}
+                isLast={index === accounts.length - 1}
+                key={account.alias}
+              />
+            ))}
+          </div>
         )}
       </div>
     </Card>
