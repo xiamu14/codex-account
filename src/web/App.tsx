@@ -988,7 +988,7 @@ function getActiveQuotaWarning(
   ].join(":");
   return {
     key,
-    message: `${formatCompactAccountLabel(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 额度已用完，建议切换。`,
+    message: `${formatCompactAccountLabel(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 额度已用完，切换账号。`,
   };
 }
 
