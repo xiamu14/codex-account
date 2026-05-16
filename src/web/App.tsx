@@ -702,7 +702,7 @@ function FailuresCard({
               </div>
             ))}
           </div>
-          <div className="my-5 border-t border-dashed border-stroke-soft-200" />
+          <div className="my-5 " />
           <Button.Root
             aria-busy={isRetrying}
             className="w-full"
@@ -988,7 +988,7 @@ function getActiveQuotaWarning(
   ].join(":");
   return {
     key,
-    message: `${formatCompactAccountLabel(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 已用尽，建议切换。`,
+    message: `${formatCompactAccountLabel(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 额度已用完，建议切换。`,
   };
 }
 
