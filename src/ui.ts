@@ -8,6 +8,10 @@ import {
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
   readAutoQuotaState,
 } from "./auto-quota.ts";
+import {
+  getAccountUsagePriorityByAlias,
+  getRecommendedNextAlias,
+} from "./account-priority.ts";
 import { activeCommand, quotaCommand } from "./commands.ts";
 import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
 import { AccountStore } from "./store.ts";
@@ -191,6 +195,8 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
         (item): item is { alias: string; reset: string } => item.reset !== null,
       ),
   );
+  const priorityByAlias = getAccountUsagePriorityByAlias(accounts);
+  const recommendedNextAlias = getRecommendedNextAlias(accounts);
 
   return {
     accounts: accounts.map((account) => ({
@@ -201,6 +207,17 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       isActive: account.isActive,
       hasAuth: account.hasAuth,
       quota: account.quota,
+      usagePriority: priorityByAlias.get(account.alias) ?? {
+        rank: null,
+        status: "unknown",
+        label: "unknown",
+        reason: "quota unknown",
+        nextRefillAt: null,
+        availableAt: null,
+        primaryWindow: "unknown",
+        secondaryWindow: "unknown",
+      },
+      isRecommendedNext: account.alias === recommendedNextAlias,
       nextRefreshAt: schedule.get(account.alias)?.toISOString() ?? null,
       lastQuotaFetchAt: autoState.lastQuotaFetchAliases.includes(account.alias)
         ? autoState.lastQuotaFetchAt

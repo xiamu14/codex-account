@@ -130,37 +130,37 @@ describe('renderList', () => {
 });
 
 describe('sortAccountsForList', () => {
-  test('orders active first, then by 5h limit, then by subscription date', () => {
+  test('orders usable accounts by fastest refill, then lower remaining quota', () => {
     const accounts: AccountSummary[] = [
       makeSummary('unknown'),
-      makeSummary('later-subscription', false, 50, 90, '2026-06-10T00:00:00.000Z'),
-      makeSummary('five-hour-winner', false, 80, 10, '2026-06-20T00:00:00.000Z'),
-      makeSummary('active-low', true, 1, 1, '2026-07-01T00:00:00.000Z'),
-      makeSummary('earlier-subscription', false, 50, 20, '2026-05-17T00:00:00.000Z')
+      makeSummary('refills-later', false, 10, 90, '2026-06-10T00:00:00.000Z', '2026-05-11T06:00:00.000Z'),
+      makeSummary('refills-sooner-high', false, 80, 10, '2026-06-20T00:00:00.000Z', '2026-05-11T02:00:00.000Z'),
+      makeSummary('refills-sooner-low', true, 20, 20, '2026-07-01T00:00:00.000Z', '2026-05-11T02:00:00.000Z'),
+      makeSummary('zero-primary', false, 0, 20, '2026-05-17T00:00:00.000Z', '2026-05-11T01:00:00.000Z')
     ];
 
     expect(sortAccountsForList(accounts).map((account) => account.alias)).toEqual([
-      'active-low',
-      'five-hour-winner',
-      'earlier-subscription',
-      'later-subscription',
-      'unknown'
+      'refills-sooner-low',
+      'refills-sooner-high',
+      'refills-later',
+      'unknown',
+      'zero-primary'
     ]);
   });
 
-  test('keeps active account first even when its 5h or weekly limit is zero', () => {
+  test('moves blocked accounts behind usable accounts', () => {
     const accounts: AccountSummary[] = [
-      makeSummary('zero-weekly-active', true, 99, 0, '2026-05-17T00:00:00.000Z'),
-      makeSummary('normal-high', false, 95, 50, '2026-06-10T00:00:00.000Z'),
-      makeSummary('normal-mid', false, 20, 20, '2026-06-01T00:00:00.000Z'),
-      makeSummary('zero-five-hour', false, 0, 100, '2026-05-16T00:00:00.000Z')
+      makeSummary('zero-weekly-active', true, 99, 0, '2026-05-17T00:00:00.000Z', '2026-05-11T02:00:00.000Z'),
+      makeSummary('normal-high', false, 95, 50, '2026-06-10T00:00:00.000Z', '2026-05-11T03:00:00.000Z'),
+      makeSummary('normal-mid', false, 20, 20, '2026-06-01T00:00:00.000Z', '2026-05-11T02:00:00.000Z'),
+      makeSummary('zero-five-hour', false, 0, 100, '2026-05-16T00:00:00.000Z', '2026-05-11T01:00:00.000Z')
     ];
 
     expect(sortAccountsForList(accounts).map((account) => account.alias)).toEqual([
-      'zero-weekly-active',
-      'normal-high',
       'normal-mid',
-      'zero-five-hour'
+      'normal-high',
+      'zero-five-hour',
+      'zero-weekly-active'
     ]);
   });
 });
@@ -170,7 +170,8 @@ function makeSummary(
   isActive = false,
   fiveHour: number | null = null,
   weekly: number | null = null,
-  subscriptionExpiresAt: string | null = null
+  subscriptionExpiresAt: string | null = null,
+  fiveHourResetsAt: string | null = null
 ): AccountSummary {
   return {
     alias,
@@ -189,7 +190,7 @@ function makeSummary(
       : {
           fiveHour: fiveHour === null
             ? null
-            : { percentLeft: fiveHour, resetsAt: null, rawReset: null },
+            : { percentLeft: fiveHour, resetsAt: fiveHourResetsAt, rawReset: null },
           weekly: weekly === null ? null : { percentLeft: weekly, resetsAt: null, rawReset: null },
           updatedAt: '2026-05-11T00:00:00.000Z'
         }

@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { describePrimaryLimit, sortAccountsByUsagePriority } from './account-priority.ts';
 import type { AccountSummary, LimitStatus } from './types.ts';
 
 export function renderList(accounts: AccountSummary[]): string {
@@ -9,36 +10,7 @@ export function renderList(accounts: AccountSummary[]): string {
 }
 
 export function sortAccountsForList(accounts: AccountSummary[]): AccountSummary[] {
-  return accounts
-    .map((account, index) => ({ account, index }))
-    .sort((left, right) => {
-      const activeDelta = Number(right.account.isActive) - Number(left.account.isActive);
-      if (activeDelta !== 0) return activeDelta;
-
-      const zeroQuotaDelta = Number(hasZeroQuota(left.account)) - Number(hasZeroQuota(right.account));
-      if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
-
-      const fiveHourDelta =
-        limitSortValue(right.account.quota?.fiveHour ?? null) - limitSortValue(left.account.quota?.fiveHour ?? null);
-      if (fiveHourDelta !== 0) return fiveHourDelta;
-
-      const subscriptionDelta = subscriptionSortValue(left.account) - subscriptionSortValue(right.account);
-      if (subscriptionDelta !== 0) return subscriptionDelta;
-
-      return left.index - right.index;
-    })
-    .map(({ account }) => account);
-}
-
-function hasZeroQuota(account: AccountSummary): boolean {
-  return account.quota?.fiveHour?.percentLeft === 0 || account.quota?.weekly?.percentLeft === 0;
-}
-
-function subscriptionSortValue(account: AccountSummary): number {
-  const value = account.meta?.subscriptionExpiresAt ?? null;
-  if (value === null || value.trim().length === 0) return Number.POSITIVE_INFINITY;
-  const time = new Date(value).getTime();
-  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
+  return sortAccountsByUsagePriority(accounts);
 }
 
 function renderAccount(account: AccountSummary): string {
@@ -46,6 +18,7 @@ function renderAccount(account: AccountSummary): string {
   const email = account.meta?.email ?? 'unknown';
   const plan = renderPlan(account.meta?.planType ?? null);
   const subscription = renderSubscription(account.meta?.subscriptionExpiresAt ?? null);
+  const primaryLabel = describePrimaryLimit(account.quota);
   const fiveHour = renderLimit(account.quota?.fiveHour ?? null);
   const weekly = renderLimit(account.quota?.weekly ?? null);
   const updatedAt = formatDateTime(account.quota?.updatedAt ?? account.meta?.updatedAt ?? null);
@@ -54,7 +27,7 @@ function renderAccount(account: AccountSummary): string {
     ...(email !== 'unknown' && email !== account.alias ? [renderRow('email', email)] : []),
     renderRow('plan', plan),
     renderRow('subscription', subscription),
-    renderRow('5h limit', fiveHour, true),
+    renderRow(primaryLabel, fiveHour, true),
     renderRow('weekly', weekly, true),
     renderRow('updated', updatedAt)
   ];
@@ -68,10 +41,6 @@ function renderLimit(limit: LimitStatus | null): string {
   const reset = limit.rawReset ?? limit.resetsAt;
   const warning = limit.percentLeft <= 10 ? chalk.red.bold('  LOW') : limit.percentLeft <= 25 ? chalk.yellow.bold('  LOW') : '';
   return reset ? `${left}${warning}, ${chalk.dim('resets')} ${formatDateTime(reset)}` : `${left}${warning}`;
-}
-
-function limitSortValue(limit: LimitStatus | null): number {
-  return limit?.percentLeft ?? -1;
 }
 
 function renderSubscription(value: string | null): string {

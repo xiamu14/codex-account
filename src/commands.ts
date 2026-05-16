@@ -9,6 +9,7 @@ import {
   readAutoQuotaState,
   writeAutoQuotaState,
 } from "./auto-quota.ts";
+import { sortAccountsByUsagePriority } from "./account-priority.ts";
 import {
   activateAuth,
   cleanupRunHome,
@@ -224,7 +225,9 @@ export async function quotaCommand(
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
-    const allAliases = state.accounts.map((account) => account.alias);
+    const allAliases = sortAccountsByUsagePriority(
+      await store.listSummaries(),
+    ).map((account) => account.alias);
     const targets =
       options.aliases ??
       (options.select === true
@@ -500,19 +503,18 @@ async function refreshAllQuotaForAutoStart(
   context: CommandContext,
   store: AccountStore,
 ): Promise<{ successes: string[]; failures: Record<string, string> }> {
-  const state = await store.loadState();
+  const sortedAliases = sortAccountsByUsagePriority(
+    await store.listSummaries(),
+  ).map((account) => account.alias);
   const successes: string[] = [];
   const failures: Record<string, string> = {};
-  for (const account of state.accounts) {
-    const result = await refreshQuotaQuietly(context, store, account.alias);
+  for (const alias of sortedAliases) {
+    const result = await refreshQuotaQuietly(context, store, alias);
     if (result.quota === null) {
-      failures[account.alias] = formatAutoQuotaFailure(
-        account.alias,
-        result.error,
-      );
+      failures[alias] = formatAutoQuotaFailure(alias, result.error);
       continue;
     }
-    successes.push(account.alias);
+    successes.push(alias);
   }
   return { successes, failures };
 }
@@ -679,12 +681,13 @@ export async function autoQuotaTickCommand(
     const failures: Record<string, string> = {};
     const recoveredAliases: string[] = [];
     const handledFiveHourResets = { ...current.handledFiveHourResets };
-    const state = await store.loadState();
+    const sortedAliases = sortAccountsByUsagePriority(
+      await store.listSummaries(),
+    ).map((account) => account.alias);
     const quotaByAlias = new Map<string, AccountQuota>();
 
-    for (const [index, account] of state.accounts.entries()) {
-      const alias = account.alias;
-      await waitBeforeQuotaRefresh(index, state.accounts.length);
+    for (const [index, alias] of sortedAliases.entries()) {
+      await waitBeforeQuotaRefresh(index, sortedAliases.length);
       const fetched = await refreshQuotaQuietly(context, store, alias);
       if (fetched.quota === null) {
         failures[alias] = formatAutoQuotaFailure(alias, fetched.error);
@@ -719,8 +722,7 @@ export async function autoQuotaTickCommand(
       })),
     );
 
-    for (const account of state.accounts) {
-      const alias = account.alias;
+    for (const alias of sortedAliases) {
       if (!(await isAutoCallEligibleAccount(store, alias))) {
         continue;
       }
@@ -737,7 +739,7 @@ export async function autoQuotaTickCommand(
       if (handledFiveHourResets[alias] === resetValue) {
         continue;
       }
-      await waitBeforeQuotaRefresh(successes.length, state.accounts.length);
+      await waitBeforeQuotaRefresh(successes.length, sortedAliases.length);
 
       const result = await callAccount(context, store, {
         alias,
@@ -1184,12 +1186,23 @@ function renderAutoQuotaStatus(
   const nextSchedule = buildAutoQuotaSchedule(
     nextRawItems.map((item) => ({ alias: item.alias, reset: item.rawReset })),
   );
+  const priorityAliases = sortAccountsByUsagePriority(summaries).map(
+    (summary) => summary.alias,
+  );
+  const priorityIndexByAlias = new Map(
+    priorityAliases.map((alias, index) => [alias, index]),
+  );
   const nextItems = nextRawItems
     .map((item) => ({
       alias: item.alias,
       reset: nextSchedule.get(item.alias) ?? item.reset,
     }))
-    .sort((left, right) => left.reset.getTime() - right.reset.getTime());
+    .sort(
+      (left, right) =>
+        (priorityIndexByAlias.get(left.alias) ?? Number.MAX_SAFE_INTEGER) -
+          (priorityIndexByAlias.get(right.alias) ?? Number.MAX_SAFE_INTEGER) ||
+        left.reset.getTime() - right.reset.getTime(),
+    );
 
   if (nextItems.length > 0) {
     lines.push("");

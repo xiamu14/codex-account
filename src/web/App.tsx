@@ -370,11 +370,6 @@ function AccountResetRow({
 }: {
   account: UiStatus["accounts"][number];
 }) {
-  const plan = formatPlan(account.planType);
-  if (plan === "free") {
-    return null;
-  }
-
   if (account.lastCallStatus === "success") {
     return (
       <AccountStatusRow
@@ -394,6 +389,54 @@ function AccountResetRow({
       value=""
     />
   );
+}
+
+function UsagePriorityBadge({
+  account,
+  compact = false,
+}: {
+  account: UiStatus["accounts"][number];
+  compact?: boolean;
+}) {
+  if (account.isRecommendedNext) {
+    return (
+      <StatusBadge.Root status="completed" variant="light">
+        <StatusBadge.Dot />
+        next
+      </StatusBadge.Root>
+    );
+  }
+  if (account.usagePriority.status === "usable") {
+    return (
+      <StatusBadge.Root status="pending" variant={compact ? "stroke" : "light"}>
+        <StatusBadge.Dot />
+        {account.usagePriority.label}
+      </StatusBadge.Root>
+    );
+  }
+  if (account.usagePriority.status === "blocked") {
+    return (
+      <StatusBadge.Root status="failed" variant="light">
+        <StatusBadge.Dot />
+        blocked
+      </StatusBadge.Root>
+    );
+  }
+  return (
+    <StatusBadge.Root status="disabled" variant="stroke">
+      <StatusBadge.Dot />
+      unknown
+    </StatusBadge.Root>
+  );
+}
+
+function formatPrimaryQuotaLabel(account: UiStatus["accounts"][number]): string {
+  if (account.usagePriority.primaryWindow === "short") return "short limit";
+  if (account.usagePriority.primaryWindow === "daily") return "daily limit";
+  if (account.usagePriority.primaryWindow === "weekly") {
+    return "weekly-like limit";
+  }
+  return "primary limit";
 }
 
 function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
@@ -445,39 +488,64 @@ function SwitchAccountCard({
     accounts.find((account) => account.isActive)?.alias ??
     accounts[0]?.alias ??
     "";
-  const inactiveAccounts = accounts.filter(
+  const inactiveAccounts = sortAccountsForDisplay(accounts).filter(
     (account) => account.alias !== activeAlias,
   );
-  const firstInactiveAlias = inactiveAccounts[0]?.alias ?? "";
-  const [selectedAlias, setSelectedAlias] = useState(firstInactiveAlias);
+  const hasUsableInactiveAccount = inactiveAccounts.some(
+    (account) => account.usagePriority.status === "usable",
+  );
+  const recommendedAlias =
+    inactiveAccounts.find((account) => account.isRecommendedNext)?.alias ?? "";
+  const defaultAlias = recommendedAlias || inactiveAccounts[0]?.alias || "";
+  const [selectedAlias, setSelectedAlias] = useState(defaultAlias);
 
   useEffect(() => {
-    setSelectedAlias(firstInactiveAlias);
-  }, [firstInactiveAlias]);
+    setSelectedAlias(defaultAlias);
+  }, [defaultAlias]);
 
-  const canActivate = selectedAlias.trim().length > 0 && !isActivating;
+  const selectedAccount =
+    inactiveAccounts.find((account) => account.alias === selectedAlias) ?? null;
+  const canActivate =
+    selectedAlias.trim().length > 0 && hasUsableInactiveAccount && !isActivating;
+  const showRecommendation = recommendedAlias !== "" && selectedAlias === recommendedAlias;
 
   return (
     <Card>
       <div className="text-label-lg text-text-strong-950">切换账号</div>
       <Divider.Root className="my-5" />
-      <div className="flex items-center gap-3">
-        <Select.Root
-          disabled={inactiveAccounts.length === 0 || isActivating}
-          onValueChange={setSelectedAlias}
-          value={selectedAlias}
-        >
-          <Select.Trigger className="flex-1">
-            <Select.Value placeholder="暂无可切换账号" />
-          </Select.Trigger>
-          <Select.Content>
-            {inactiveAccounts.map((account) => (
-              <Select.Item key={account.alias} value={account.alias}>
-                {account.alias}
-              </Select.Item>
-            ))}
-          </Select.Content>
-        </Select.Root>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <Select.Root
+            disabled={!hasUsableInactiveAccount || isActivating}
+            onValueChange={setSelectedAlias}
+            value={selectedAlias}
+          >
+            <Select.Trigger>
+              {selectedAccount === null ? (
+                <Select.Value placeholder="暂无可切换账号" />
+              ) : (
+                <span className="flex min-w-0 items-center gap-2">
+                  {showRecommendation ? (
+                    <span className="size-2 shrink-0 rounded-full bg-success-base" />
+                  ) : null}
+                  <span className="truncate">{selectedAccount.alias}</span>
+                </span>
+              )}
+            </Select.Trigger>
+            <Select.Content>
+              {inactiveAccounts.map((account) => (
+                <Select.Item key={account.alias} value={account.alias}>
+                  {account.alias}
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Root>
+          {showRecommendation ? (
+            <div className="mt-2 text-paragraph-xs text-text-sub-600">
+              下一个账号建议使用
+            </div>
+          ) : null}
+        </div>
         <Button.Root
           aria-busy={isActivating}
           disabled={!canActivate}
@@ -508,49 +576,21 @@ function LoadingSpinner() {
 function sortAccountsForDisplay(
   accounts: UiStatus["accounts"],
 ): UiStatus["accounts"] {
-  return accounts
-    .map((account, index) => ({ account, index }))
-    .sort((left, right) => {
-      const activeDelta =
-        Number(right.account.isActive) - Number(left.account.isActive);
-      if (activeDelta !== 0) return activeDelta;
-
-      const zeroQuotaDelta =
-        Number(hasZeroQuota(left.account)) -
-        Number(hasZeroQuota(right.account));
-      if (zeroQuotaDelta !== 0) return zeroQuotaDelta;
-
-      const fiveHourDelta =
-        limitSortValue(right.account.quota?.fiveHour?.percentLeft ?? null) -
-        limitSortValue(left.account.quota?.fiveHour?.percentLeft ?? null);
-      if (fiveHourDelta !== 0) return fiveHourDelta;
-
-      const subscriptionDelta =
-        subscriptionSortValue(left.account.subscriptionExpiresAt) -
-        subscriptionSortValue(right.account.subscriptionExpiresAt);
-      if (subscriptionDelta !== 0) return subscriptionDelta;
-
-      return left.index - right.index;
-    })
-    .map(({ account }) => account);
+  return [...accounts].sort((left, right) => {
+    const leftRank = left.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = right.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    if (left.usagePriority.status !== right.usagePriority.status) {
+      return statusSortValue(left) - statusSortValue(right);
+    }
+    return accounts.indexOf(left) - accounts.indexOf(right);
+  });
 }
 
-function hasZeroQuota(account: UiStatus["accounts"][number]): boolean {
-  return (
-    account.quota?.fiveHour?.percentLeft === 0 ||
-    account.quota?.weekly?.percentLeft === 0
-  );
-}
-
-function limitSortValue(value: number | null): number {
-  return value ?? -1;
-}
-
-function subscriptionSortValue(value: string | null): number {
-  if (value === null || value.trim().length === 0)
-    return Number.POSITIVE_INFINITY;
-  const time = new Date(value).getTime();
-  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
+function statusSortValue(account: UiStatus["accounts"][number]): number {
+  if (account.usagePriority.status === "usable") return 0;
+  if (account.usagePriority.status === "unknown") return 1;
+  return 2;
 }
 
 function AccountRow({
@@ -562,8 +602,7 @@ function AccountRow({
 }) {
   const fiveHour = account.quota?.fiveHour?.percentLeft ?? null;
   const weeklyQuota = account.quota?.weekly ?? null;
-  const primaryQuotaLabel =
-    formatPlan(account.planType) === "free" ? "24h limit" : "5h limit";
+  const primaryQuotaLabel = formatPrimaryQuotaLabel(account);
 
   return (
     <>

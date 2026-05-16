@@ -1,4 +1,5 @@
 import type { AccountQuota } from "./types.ts";
+import type { AccountUsagePriority } from "./account-priority.ts";
 
 export type UiStatus = {
   accounts: Array<{
@@ -9,6 +10,8 @@ export type UiStatus = {
     isActive: boolean;
     hasAuth: boolean;
     quota: AccountQuota | null;
+    usagePriority: AccountUsagePriority;
+    isRecommendedNext: boolean;
     nextRefreshAt: string | null;
     lastQuotaFetchAt: string | null;
     lastCallAt: string | null;

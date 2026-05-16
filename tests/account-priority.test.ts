@@ -1,0 +1,95 @@
+import { describe, expect, test } from "bun:test";
+import {
+  describePrimaryLimit,
+  getRecommendedNextAlias,
+  sortAccountsByUsagePriority,
+} from "../src/account-priority.ts";
+import type { AccountSummary } from "../src/types.ts";
+
+describe("account usage priority", () => {
+  test("recommends the inactive usable account with the fastest refill", () => {
+    const accounts = [
+      makeSummary("active@example.com", true, 5, "2026-05-11T03:00:00.000Z"),
+      makeSummary("slow@example.com", false, 1, "2026-05-11T06:00:00.000Z"),
+      makeSummary("fast@example.com", false, 90, "2026-05-11T02:00:00.000Z"),
+    ];
+
+    expect(getRecommendedNextAlias(accounts)).toBe("fast@example.com");
+  });
+
+  test("waits for all blocking limits before treating an account as available", () => {
+    const accounts = [
+      makeSummary("usable@example.com", false, 10, "2026-05-11T05:00:00.000Z"),
+      makeSummary("blocked@example.com", false, 0, "2026-05-11T02:00:00.000Z", 0, "2026-05-17T00:00:00.000Z"),
+    ];
+
+    const sorted = sortAccountsByUsagePriority(accounts);
+    expect(sorted.map((account) => account.alias)).toEqual([
+      "usable@example.com",
+      "blocked@example.com",
+    ]);
+  });
+
+  test("classifies the primary reset window from actual quota times", () => {
+    expect(describePrimaryLimit(makeQuota("2026-05-11T05:30:00.000Z"))).toBe(
+      "short limit",
+    );
+    expect(describePrimaryLimit(makeQuota("2026-05-12T00:00:00.000Z"))).toBe(
+      "daily limit",
+    );
+    expect(describePrimaryLimit(makeQuota("2026-05-17T00:00:00.000Z"))).toBe(
+      "weekly-like limit",
+    );
+  });
+});
+
+function makeSummary(
+  alias: string,
+  isActive: boolean,
+  primaryLeft: number,
+  primaryReset: string,
+  weeklyLeft: number | null = null,
+  weeklyReset: string | null = null,
+): AccountSummary {
+  return {
+    alias,
+    isActive,
+    hasAuth: true,
+    meta: {
+      alias,
+      email: alias,
+      planType: "plus",
+      subscriptionExpiresAt: null,
+      createdAt: "2026-05-11T00:00:00.000Z",
+      updatedAt: "2026-05-11T00:00:00.000Z",
+    },
+    quota: {
+      fiveHour: {
+        percentLeft: primaryLeft,
+        resetsAt: primaryReset,
+        rawReset: null,
+      },
+      weekly:
+        weeklyLeft === null
+          ? null
+          : {
+              percentLeft: weeklyLeft,
+              resetsAt: weeklyReset,
+              rawReset: null,
+            },
+      updatedAt: "2026-05-11T00:00:00.000Z",
+    },
+  };
+}
+
+function makeQuota(primaryReset: string) {
+  return {
+    fiveHour: {
+      percentLeft: 50,
+      resetsAt: primaryReset,
+      rawReset: null,
+    },
+    weekly: null,
+    updatedAt: "2026-05-11T00:00:00.000Z",
+  };
+}
