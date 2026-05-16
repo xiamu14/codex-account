@@ -52,7 +52,7 @@ function Root({
 
   return (
     <Alert.Root
-      className="w-[360px]"
+      className="w-[360px] bg-bg-white-0 shadow-regular-lg ring-1 ring-stroke-soft-200"
       size="small"
       status={status}
       variant={variant}

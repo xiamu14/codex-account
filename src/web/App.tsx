@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { RiCheckboxCircleFill } from "@remixicon/react";
+import { isSubscriptionPlan } from "../account-priority.ts";
 import type { UiStatus } from "../ui-status.ts";
 import * as Badge from "./components/ui/badge.tsx";
 import * as Button from "./components/ui/button.tsx";
@@ -19,6 +20,7 @@ type LoadState =
 
 const hiddenScrollListClass =
   "grid max-h-56 gap-3 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+const shownToastKeys = new Set<string>();
 
 export function App() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -431,6 +433,7 @@ function UsagePriorityBadge({
 }
 
 function formatPrimaryQuotaLabel(account: UiStatus["accounts"][number]): string {
+  if (isSubscriptionPlan(account.planType)) return "5h limit";
   if (account.usagePriority.primaryWindow === "short") return "short limit";
   if (account.usagePriority.primaryWindow === "daily") return "daily limit";
   if (account.usagePriority.primaryWindow === "weekly") {
@@ -988,7 +991,9 @@ function notifyActiveQuotaWarning(
   warning: { key: string; message: string } | null,
 ): void {
   if (warning === null) return;
+  if (shownToastKeys.has(warning.key)) return;
   if (window.localStorage.getItem(warning.key) === "seen") return;
+  shownToastKeys.add(warning.key);
   window.localStorage.setItem(warning.key, "seen");
   toast.custom(
     (t) => (

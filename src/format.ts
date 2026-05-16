@@ -18,7 +18,7 @@ function renderAccount(account: AccountSummary): string {
   const email = account.meta?.email ?? 'unknown';
   const plan = renderPlan(account.meta?.planType ?? null);
   const subscription = renderSubscription(account.meta?.subscriptionExpiresAt ?? null);
-  const primaryLabel = describePrimaryLimit(account.quota);
+  const primaryLabel = describePrimaryLimit(account.quota, account.meta?.planType ?? null);
   const fiveHour = renderLimit(account.quota?.fiveHour ?? null);
   const weekly = renderLimit(account.quota?.weekly ?? null);
   const updatedAt = formatDateTime(account.quota?.updatedAt ?? account.meta?.updatedAt ?? null);

@@ -58,12 +58,23 @@ export function getRecommendedNextAlias(
   return ranked[0]?.account.alias ?? null;
 }
 
-export function describePrimaryLimit(quota: AccountQuota | null): string {
+export function describePrimaryLimit(
+  quota: AccountQuota | null,
+  planType: string | null = null,
+): string {
+  if (isSubscriptionPlan(planType)) return "5h limit";
   const window = inferLimitWindow(quota?.fiveHour ?? null, quota?.updatedAt ?? null);
   if (window === "short") return "short limit";
   if (window === "daily") return "daily limit";
   if (window === "weekly") return "weekly-like limit";
   return "primary limit";
+}
+
+export function isSubscriptionPlan(planType: string | null): boolean {
+  if (planType === null) return false;
+  return ["plus", "pro", "team", "enterprise", "business"].includes(
+    planType.toLowerCase(),
+  );
 }
 
 export function inferLimitWindow(

@@ -251,7 +251,7 @@ describe("quotaCommand", () => {
     expect(output.text).toContain("已刷新 user@example.com");
     expect(output.text).toContain("* user@example.com");
     expect(output.text).toContain("email         fresh@example.com");
-    expect(output.text).toContain("primary limit 80% left");
+    expect(output.text).toContain("5h limit      80% left");
   });
 
   test("keeps updating account metadata when quota refresh fails", async () => {

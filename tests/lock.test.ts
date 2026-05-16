@@ -55,4 +55,28 @@ describe("withLock", () => {
       "另一个 bun cli 操作正在运行",
     );
   });
+
+  test("waits for a running operation when requested", async () => {
+    const appHome = await makeAppHome();
+    const first = withLock(appHome, async () => {
+      await sleep(80);
+    });
+    await sleep(10);
+
+    let ran = false;
+    await withLock(
+      appHome,
+      async () => {
+        ran = true;
+      },
+      { waitMs: 1_000, retryIntervalMs: 10 },
+    );
+    await first;
+
+    expect(ran).toBe(true);
+  });
 });
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}

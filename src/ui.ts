@@ -23,6 +23,7 @@ const PORTLESS_PROXY_PORT = 1_355;
 const PORTLESS_NAME = "codexaccount";
 const UI_EVENT_INTERVAL_MS = 5_000;
 const UI_EVENT_HEARTBEAT_DATA = "ok";
+const UI_LOCK_WAIT_MS = 30_000;
 const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
 const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
 
@@ -48,7 +49,14 @@ export async function uiCommand(
       if (typeof body.alias !== "string" || body.alias.trim().length === 0) {
         return c.text("请选择账号。", 400);
       }
-      await activeCommand(context, body.alias);
+      try {
+        await activeCommand(context, body.alias, { lockWaitMs: UI_LOCK_WAIT_MS });
+      } catch (error) {
+        if (isLockBusyError(error)) {
+          return c.text("后台正在刷新额度，请稍后再试。", 409);
+        }
+        throw error;
+      }
       return c.json(await readStatus(context));
     } catch (error) {
       return c.text(error instanceof Error ? error.message : String(error), 500);
@@ -118,6 +126,13 @@ export async function uiCommand(
     `Web UI 内部服务已启动：http://127.0.0.1:${UI_APP_PORT}\n`,
   );
   await new Promise(() => undefined);
+}
+
+function isLockBusyError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("另一个 bun cli 操作正在运行")
+  );
 }
 
 async function runPortlessUi(context: CommandContext): Promise<void> {

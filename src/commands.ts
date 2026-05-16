@@ -192,6 +192,7 @@ export async function deactiveCommand(context: CommandContext): Promise<void> {
 export async function activeCommand(
   context: CommandContext,
   alias?: string,
+  options: { lockWaitMs?: number } = {},
 ): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
@@ -215,7 +216,7 @@ export async function activeCommand(
     await store.setActive(target);
     await launchCodexDesktop();
     context.stdout.write(`已激活 ${target}。\n`);
-  });
+  }, { waitMs: options.lockWaitMs });
 }
 
 export async function quotaCommand(

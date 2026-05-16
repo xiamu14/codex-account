@@ -41,6 +41,12 @@ describe("account usage priority", () => {
       "weekly-like limit",
     );
   });
+
+  test("uses 5h limit label for subscription plans", () => {
+    expect(
+      describePrimaryLimit(makeQuota("2026-05-11T05:30:00.000Z"), "plus"),
+    ).toBe("5h limit");
+  });
 });
 
 function makeSummary(
