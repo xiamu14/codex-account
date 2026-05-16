@@ -432,7 +432,9 @@ function UsagePriorityBadge({
   );
 }
 
-function formatPrimaryQuotaLabel(account: UiStatus["accounts"][number]): string {
+function formatPrimaryQuotaLabel(
+  account: UiStatus["accounts"][number],
+): string {
   if (isSubscriptionPlan(account.planType)) return "5h limit";
   if (account.usagePriority.primaryWindow === "short") return "short limit";
   if (account.usagePriority.primaryWindow === "daily") return "daily limit";
@@ -509,8 +511,11 @@ function SwitchAccountCard({
   const selectedAccount =
     inactiveAccounts.find((account) => account.alias === selectedAlias) ?? null;
   const canActivate =
-    selectedAlias.trim().length > 0 && hasUsableInactiveAccount && !isActivating;
-  const showRecommendation = recommendedAlias !== "" && selectedAlias === recommendedAlias;
+    selectedAlias.trim().length > 0 &&
+    hasUsableInactiveAccount &&
+    !isActivating;
+  const showRecommendation =
+    recommendedAlias !== "" && selectedAlias === recommendedAlias;
 
   return (
     <Card>
@@ -822,7 +827,7 @@ function QuotaToasts({
         toast.custom(
           (t) => (
             <ToastAlert.Root
-              message={`休眠期间错过 ${formatCount(quota.lastMissedCheckCount)} 个检查周期，已在唤醒后重新检查。`}
+              message={`休眠期间检查停止，已重新检查。`}
               status="success"
               t={t}
             />
@@ -838,7 +843,7 @@ function QuotaToasts({
     toast.custom(
       (t) => (
         <ToastAlert.Root
-          message="检测到自动刷新已开启但服务未运行，已重新启动后台检查。"
+          message="自动刷新服务未运行，已重新启动。"
           status="success"
           t={t}
         />
@@ -996,9 +1001,7 @@ function notifyActiveQuotaWarning(
   shownToastKeys.add(warning.key);
   window.localStorage.setItem(warning.key, "seen");
   toast.custom(
-    (t) => (
-      <ToastAlert.Root message={warning.message} status="warning" t={t} />
-    ),
+    (t) => <ToastAlert.Root message={warning.message} status="warning" t={t} />,
     { duration: 6_000 },
   );
 }
