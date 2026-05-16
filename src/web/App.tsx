@@ -562,6 +562,8 @@ function AccountRow({
 }) {
   const fiveHour = account.quota?.fiveHour?.percentLeft ?? null;
   const weeklyQuota = account.quota?.weekly ?? null;
+  const primaryQuotaLabel =
+    formatPlan(account.planType) === "free" ? "24h limit" : "5h limit";
 
   return (
     <>
@@ -590,7 +592,7 @@ function AccountRow({
           className={`mt-4 grid gap-4 ${weeklyQuota !== null ? "md:grid-cols-2" : ""}`}
         >
           <QuotaBlock
-            label="5h limit"
+            label={primaryQuotaLabel}
             percent={fiveHour}
             resetAt={account.quota?.fiveHour?.resetsAt ?? null}
           />
