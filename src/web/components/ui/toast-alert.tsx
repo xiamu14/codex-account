@@ -52,12 +52,12 @@ function Root({
 
   return (
     <Alert.Root
-      className="w-90 shadow-regular-md"
+      className="w-auto shadow-regular-md px-6 min-w-70"
       size="large"
       status={status}
       variant={variant}
     >
-      <Alert.Icon as={Icon} />
+      <Alert.Icon as={Icon} size="large" />
       <span className="min-w-0 leading-5">{message}</span>
       {dismissable && (
         <button

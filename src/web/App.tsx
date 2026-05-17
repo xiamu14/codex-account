@@ -493,7 +493,7 @@ function SwitchAccountCard({
     accounts.find((account) => account.isActive)?.alias ??
     accounts[0]?.alias ??
     "";
-  const inactiveAccounts = sortAccountsForDisplay(accounts).filter(
+  const inactiveAccounts = sortAccountsForUsage(accounts).filter(
     (account) => account.alias !== activeAlias,
   );
   const hasUsableInactiveAccount = inactiveAccounts.some(
@@ -561,7 +561,11 @@ function SwitchAccountCard({
             if (!canActivate) return;
             void onActivate(selectedAlias);
           }}
-          className={"w-[80px]"}
+          className={
+            isActivating
+              ? "w-[80px] bg-primary-base/85 text-static-white shadow-regular-xs"
+              : "w-[80px]"
+          }
           mode="filled"
         >
           {isActivating ? <LoadingSpinner /> : null}
@@ -576,7 +580,7 @@ function LoadingSpinner() {
   return (
     <span
       aria-hidden="true"
-      className="size-4 animate-spin rounded-full border-2 border-static-white/35 border-t-static-white"
+      className="size-4 animate-spin rounded-full border-2 border-static-white/45 border-t-static-white"
     />
   );
 }
@@ -585,6 +589,26 @@ function sortAccountsForDisplay(
   accounts: UiStatus["accounts"],
 ): UiStatus["accounts"] {
   return [...accounts].sort((left, right) => {
+    const activeDelta = Number(right.isActive) - Number(left.isActive);
+    if (activeDelta !== 0) return activeDelta;
+
+    return compareAccountsByUsage(accounts, left, right);
+  });
+}
+
+function sortAccountsForUsage(
+  accounts: UiStatus["accounts"],
+): UiStatus["accounts"] {
+  return [...accounts].sort((left, right) =>
+    compareAccountsByUsage(accounts, left, right),
+  );
+}
+
+function compareAccountsByUsage(
+  accounts: UiStatus["accounts"],
+  left: UiStatus["accounts"][number],
+  right: UiStatus["accounts"][number],
+): number {
     const leftRank = left.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
     const rightRank = right.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
     if (leftRank !== rightRank) return leftRank - rightRank;
@@ -592,7 +616,6 @@ function sortAccountsForDisplay(
       return statusSortValue(left) - statusSortValue(right);
     }
     return accounts.indexOf(left) - accounts.indexOf(right);
-  });
 }
 
 function statusSortValue(account: UiStatus["accounts"][number]): number {
