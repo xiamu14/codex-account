@@ -52,7 +52,7 @@ function Root({
 
   return (
     <Alert.Root
-      className="w-auto shadow-regular-md px-6 min-w-70"
+      className="w-auto shadow-regular-md px-6 min-w-60 gap-2"
       size="large"
       status={status}
       variant={variant}
