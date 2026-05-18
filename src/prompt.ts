@@ -3,6 +3,7 @@ import type { Writable } from 'node:stream';
 import { isCancel } from '@clack/core';
 import { cancel, confirm as clackConfirm, multiselect, select, spinner, text } from '@clack/prompts';
 import type { TextOptions } from '@clack/prompts';
+import { formatAccountDisplayName } from './account-display.ts';
 
 export async function confirm(message: string, defaultValue = false): Promise<boolean> {
   const value = await clackConfirm({
@@ -46,7 +47,7 @@ export async function selectAlias(aliases: string[], action: string): Promise<st
     options: aliases.map((alias) => {
       return {
         value: alias,
-        label: alias
+        label: formatAccountDisplayName(alias)
       };
     })
   });
@@ -63,7 +64,7 @@ export async function selectAliases(aliases: string[], action: string): Promise<
     options: aliases.map((alias) => {
       return {
         value: alias,
-        label: alias
+        label: formatAccountDisplayName(alias)
       };
     }),
     required: true

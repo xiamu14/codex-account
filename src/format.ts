@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { formatAccountDisplayName } from './account-display.ts';
 import { describePrimaryLimit, sortAccountsByUsagePriority } from './account-priority.ts';
 import type { AccountSummary, LimitStatus } from './types.ts';
 
@@ -15,7 +16,9 @@ export function sortAccountsForList(accounts: AccountSummary[]): AccountSummary[
 
 function renderAccount(account: AccountSummary): string {
   const marker = account.isActive ? chalk.green.bold('*') : ' ';
+  const displayName = formatAccountDisplayName(account.alias);
   const email = account.meta?.email ?? 'unknown';
+  const displayEmail = email === 'unknown' ? email : formatAccountDisplayName(email);
   const plan = renderPlan(account.meta?.planType ?? null);
   const subscription = renderSubscription(account.meta?.subscriptionExpiresAt ?? null);
   const primaryLabel = describePrimaryLimit(account.quota, account.meta?.planType ?? null);
@@ -23,8 +26,8 @@ function renderAccount(account: AccountSummary): string {
   const weekly = renderLimit(account.quota?.weekly ?? null);
   const updatedAt = formatDateTime(account.quota?.updatedAt ?? account.meta?.updatedAt ?? null);
   const rows = [
-    `${marker} ${chalk.bold(account.alias)}${account.isActive ? chalk.green('  active') : ''}`,
-    ...(email !== 'unknown' && email !== account.alias ? [renderRow('email', email)] : []),
+    `${marker} ${chalk.bold(displayName)}${account.isActive ? chalk.green('  active') : ''}`,
+    ...(displayEmail !== 'unknown' && displayEmail !== displayName ? [renderRow('email', displayEmail)] : []),
     renderRow('plan', plan),
     renderRow('subscription', subscription),
     renderRow(primaryLabel, fiveHour, true),

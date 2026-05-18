@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { RiCheckboxCircleFill } from "@remixicon/react";
+import {
+  formatAccountDisplayName,
+  formatCompactAccountDisplayName,
+} from "../account-display.ts";
 import { isSubscriptionPlan } from "../account-priority.ts";
 import type { UiStatus } from "../ui-status.ts";
 import * as Badge from "./components/ui/badge.tsx";
@@ -92,7 +96,7 @@ export function App() {
           toast.custom(
             (t) => (
               <ToastAlert.Root
-                message={`账号 ${alias} 已激活`}
+                message={`账号 ${formatAccountDisplayName(alias)} 已激活`}
                 status="success"
                 t={t}
               />
@@ -269,7 +273,7 @@ function QuotaRefreshCard({
           <AccountStatusRow
             key={account.alias}
             description={`下次刷新：${formatDateTime(nextQuotaFetchAt)}`}
-            label={account.alias}
+            label={formatAccountDisplayName(account.alias)}
             status={
               account.lastQuotaFetchAt === null
                 ? { color: "gray", label: "waiting" }
@@ -376,7 +380,7 @@ function AccountResetRow({
     return (
       <AccountStatusRow
         description="最近一轮已成功触发 reset call。"
-        label={account.alias}
+        label={formatAccountDisplayName(account.alias)}
         status={{ color: "green", label: "success" }}
         value={formatDateTime(account.lastCallAt)}
       />
@@ -386,7 +390,7 @@ function AccountResetRow({
   return (
     <AccountStatusRow
       description={`下次重置：${formatDateTime(account.nextRefreshAt)}`}
-      label={account.alias}
+      label={formatAccountDisplayName(account.alias)}
       status={{ color: "gray", label: "waiting" }}
       value=""
     />
@@ -536,14 +540,16 @@ function SwitchAccountCard({
                   {showRecommendation ? (
                     <span className="size-2 shrink-0 rounded-full bg-success-base" />
                   ) : null}
-                  <span className="truncate">{selectedAccount.alias}</span>
+                  <span className="truncate">
+                    {formatAccountDisplayName(selectedAccount.alias)}
+                  </span>
                 </span>
               )}
             </Select.Trigger>
             <Select.Content>
               {inactiveAccounts.map((account) => (
                 <Select.Item key={account.alias} value={account.alias}>
-                  {account.alias}
+                  {formatAccountDisplayName(account.alias)}
                 </Select.Item>
               ))}
             </Select.Content>
@@ -609,13 +615,13 @@ function compareAccountsByUsage(
   left: UiStatus["accounts"][number],
   right: UiStatus["accounts"][number],
 ): number {
-    const leftRank = left.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
-    const rightRank = right.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
-    if (leftRank !== rightRank) return leftRank - rightRank;
-    if (left.usagePriority.status !== right.usagePriority.status) {
-      return statusSortValue(left) - statusSortValue(right);
-    }
-    return accounts.indexOf(left) - accounts.indexOf(right);
+  const leftRank = left.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
+  const rightRank = right.usagePriority.rank ?? Number.MAX_SAFE_INTEGER;
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  if (left.usagePriority.status !== right.usagePriority.status) {
+    return statusSortValue(left) - statusSortValue(right);
+  }
+  return accounts.indexOf(left) - accounts.indexOf(right);
 }
 
 function statusSortValue(account: UiStatus["accounts"][number]): number {
@@ -642,7 +648,7 @@ function AccountRow({
           <div className="min-w-0 w-full">
             <div className="flex items-center gap-2">
               <div className="truncate text-label-md text-text-strong-950">
-                {account.alias}
+                {formatAccountDisplayName(account.alias)}
               </div>
               {account.isActive ? (
                 <MetadataBadge color="green" label="active" />
@@ -653,6 +659,10 @@ function AccountRow({
               {account.subscriptionExpiresAt ? (
                 <div className="text-paragraph-xs text-text-sub-600">
                   <span>{formatDate(account.subscriptionExpiresAt)}</span>
+                </div>
+              ) : isSubscriptionPlan(account.planType) ? (
+                <div className="text-paragraph-xs text-text-soft-400">
+                  unknown
                 </div>
               ) : null}
             </div>
@@ -714,7 +724,7 @@ function FailuresCard({
                 />
                 <div className="min-w-0">
                   <div className="truncate text-label-sm text-text-strong-950">
-                    {alias}
+                    {formatAccountDisplayName(alias)}
                   </div>
                   {formatFailureReason(reason) === "" ? null : (
                     <div className="mt-0.5 text-paragraph-xs text-text-sub-600">
@@ -972,23 +982,6 @@ function formatFailureReason(value: string): string {
   return value;
 }
 
-function formatCompactAccountLabel(alias: string): string {
-  const trimmed = alias.trim();
-  if (trimmed.length <= 18) return trimmed;
-
-  const atIndex = trimmed.indexOf("@");
-  if (atIndex > 0) {
-    const name = trimmed.slice(0, atIndex);
-    const domain = trimmed.slice(atIndex + 1);
-    const compactName = name.length > 6 ? `${name.slice(0, 6)}...` : name;
-    const compactDomain =
-      domain === "gmail.com" ? "gmail" : domain.split(".")[0] || domain;
-    return `${compactName}@${compactDomain}`;
-  }
-
-  return `${trimmed.slice(0, 15)}...`;
-}
-
 function getActiveQuotaWarning(
   accounts: UiStatus["accounts"],
 ): { key: string; message: string } | null {
@@ -1011,7 +1004,7 @@ function getActiveQuotaWarning(
   ].join(":");
   return {
     key,
-    message: `${formatCompactAccountLabel(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 额度已用完，切换账号。`,
+    message: `${formatCompactAccountDisplayName(activeAccount.alias)} ${exhaustedLimits.join(" / ")} 额度已用完，切换账号。`,
   };
 }
 

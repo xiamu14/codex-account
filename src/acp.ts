@@ -282,6 +282,30 @@ export function parseAccountInfo(value: unknown): AcpAccountInfo {
     "subscriptionExpiresAt",
     "expiresAt",
     "renewalDate",
+    "renewalAt",
+    "renewsAt",
+    "endsAt",
+    "endDate",
+    "currentPeriodEnd",
+    "current_period_end",
+    "current_period_ends_at",
+  ]) ?? pickNestedString(account, [
+    ["subscription", "subscriptionExpiresAt"],
+    ["subscription", "expiresAt"],
+    ["subscription", "expires_at"],
+    ["subscription", "renewalDate"],
+    ["subscription", "renewalAt"],
+    ["subscription", "renewsAt"],
+    ["subscription", "endsAt"],
+    ["subscription", "endDate"],
+    ["subscription", "currentPeriodEnd"],
+    ["subscription", "current_period_end"],
+    ["subscription", "current_period_ends_at"],
+    ["billing", "subscriptionExpiresAt"],
+    ["billing", "renewalDate"],
+    ["billing", "renewalAt"],
+    ["billing", "currentPeriodEnd"],
+    ["billing", "current_period_end"],
   ]);
   return {
     email,
@@ -358,6 +382,31 @@ function pickString(
   for (const key of keys) {
     const value = record[key];
     if (isString(value) && value.trim().length > 0) return value;
+  }
+  return null;
+}
+
+function pickNestedString(
+  record: Record<string, unknown>,
+  paths: string[][],
+): string | null {
+  for (const path of paths) {
+    let current: unknown = record;
+    for (const key of path) {
+      if (!isRecord(current)) {
+        current = null;
+        break;
+      }
+      current = current[key];
+    }
+    if (isString(current) && current.trim().length > 0) {
+      return current;
+    }
+    if (isNumber(current)) {
+      return current > 1_000_000_000_000
+        ? new Date(current).toISOString()
+        : new Date(current * 1000).toISOString();
+    }
   }
   return null;
 }

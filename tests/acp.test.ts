@@ -16,6 +16,21 @@ describe('ACP parsers', () => {
     expect(account.subscriptionExpiresAt).toBe('2026-06-01T00:00:00.000Z');
   });
 
+  test('parses nested subscription expiry variants', () => {
+    const account = parseAccountInfo({
+      account: {
+        email: 'user@example.com',
+        plan: 'plus',
+        subscription: {
+          current_period_end: 1780272000
+        }
+      }
+    });
+
+    expect(account.planType).toBe('plus');
+    expect(account.subscriptionExpiresAt).toBe('2026-06-01T00:00:00.000Z');
+  });
+
   test('parses rate limit payload variants', () => {
     const quota = parseQuota({
       rateLimits: {

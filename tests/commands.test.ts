@@ -249,8 +249,8 @@ describe("quotaCommand", () => {
     await quotaCommand(context);
 
     expect(output.text).toContain("已刷新 user@example.com");
-    expect(output.text).toContain("* user@example.com");
-    expect(output.text).toContain("email         fresh@example.com");
+    expect(output.text).toContain("* user  active");
+    expect(output.text).toContain("email         fresh");
     expect(output.text).toContain("5h limit      80% left");
   });
 

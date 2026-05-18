@@ -52,14 +52,14 @@ function Root({
 
   return (
     <Alert.Root
-      className="w-auto shadow-regular-md px-6 min-w-60 gap-2"
+      className="w-auto shadow-regular-md px-4 min-w-50"
       size="large"
       status={status}
       variant={variant}
     >
       <Alert.Icon as={Icon} size="large" />
       <span className="min-w-0 leading-5">{message}</span>
-      {dismissable && (
+      {/*{dismissable && (
         <button
           className="shrink-0"
           onClick={() => toast.dismiss(t)}
@@ -67,7 +67,7 @@ function Root({
         >
           <Alert.CloseIcon />
         </button>
-      )}
+      )}*/}
     </Alert.Root>
   );
 }

@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
+import { formatAccountDisplayName, formatCompactAccountDisplayName } from '../src/account-display.ts';
 import { formatDateTime, renderList, sortAccountsForList } from '../src/format.ts';
 import type { AccountSummary } from '../src/types.ts';
+
+describe('account display names', () => {
+  test('hides email suffixes and trims a trailing dot', () => {
+    expect(formatAccountDisplayName('martinlindafgxpi2888.@gmail.com')).toBe('martinlindafgxpi2888');
+    expect(formatAccountDisplayName('same@example.com')).toBe('same');
+    expect(formatCompactAccountDisplayName('averyveryverylongname@example.com')).toBe('averyveryverylo...');
+  });
+});
 
 describe('formatDateTime', () => {
   test('formats iso time without T or timezone suffix', () => {
@@ -16,7 +25,7 @@ describe('formatDateTime', () => {
 });
 
 describe('renderList', () => {
-  test('hides duplicate email row when alias is the email', () => {
+  test('hides duplicate email row and email suffix when alias is the email', () => {
     const rendered = renderList([{
       alias: 'same@example.com',
       isActive: false,
@@ -33,7 +42,8 @@ describe('renderList', () => {
     }]);
 
     expect(rendered).not.toContain('email');
-    expect(rendered).toContain('same@example.com');
+    expect(rendered).toContain('same');
+    expect(rendered).not.toContain('same@example.com');
   });
 
   test('shows unknown subscription when expiry date is not set', () => {
