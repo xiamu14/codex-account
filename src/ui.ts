@@ -50,7 +50,9 @@ export async function uiCommand(
         return c.text("请选择账号。", 400);
       }
       try {
-        await activeCommand(context, body.alias, { lockWaitMs: UI_LOCK_WAIT_MS });
+        await activeCommand(context, body.alias, {
+          lockWaitMs: UI_LOCK_WAIT_MS,
+        });
       } catch (error) {
         if (isLockBusyError(error)) {
           return c.text("后台正在刷新额度，请稍后再试。", 409);
@@ -59,7 +61,10 @@ export async function uiCommand(
       }
       return c.json(await readStatus(context));
     } catch (error) {
-      return c.text(error instanceof Error ? error.message : String(error), 500);
+      return c.text(
+        error instanceof Error ? error.message : String(error),
+        500,
+      );
     }
   });
   app.post("/api/quota/retry", async (c) => {
@@ -67,7 +72,10 @@ export async function uiCommand(
       await quotaCommand(context);
       return c.json(await readStatus(context));
     } catch (error) {
-      return c.text(error instanceof Error ? error.message : String(error), 500);
+      return c.text(
+        error instanceof Error ? error.message : String(error),
+        500,
+      );
     }
   });
   app.get("/api/events", (c) =>
@@ -129,10 +137,7 @@ export async function uiCommand(
 }
 
 function isLockBusyError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.message.includes("另一个 bun cli 操作正在运行")
-  );
+  return error instanceof Error && error.message.includes("后台服务正在运行");
 }
 
 async function runPortlessUi(context: CommandContext): Promise<void> {

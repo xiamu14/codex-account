@@ -1,5 +1,5 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { lockPath } from './paths.ts';
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lockPath } from "./paths.ts";
 
 const BROKEN_LOCK_TTL_MS = 30_000;
 const DEFAULT_LOCK_RETRY_INTERVAL_MS = 500;
@@ -15,10 +15,10 @@ function isProcessAlive(pid: number): boolean {
     return true;
   } catch (error) {
     if (
-      typeof error === 'object' &&
+      typeof error === "object" &&
       error !== null &&
-      'code' in error &&
-      error.code === 'ESRCH'
+      "code" in error &&
+      error.code === "ESRCH"
     ) {
       return false;
     }
@@ -35,7 +35,11 @@ export async function withLock<T>(
   await acquireLock(target, options);
 
   try {
-    await writeFile(`${target}/owner`, `${process.pid}\n${new Date().toISOString()}\n`, 'utf8');
+    await writeFile(
+      `${target}/owner`,
+      `${process.pid}\n${new Date().toISOString()}\n`,
+      "utf8",
+    );
     return await run();
   } finally {
     await rm(target, { recursive: true, force: true });
@@ -57,7 +61,7 @@ async function acquireLock(
     const result = await tryAcquireLock(target);
     if (result) return;
     if (Date.now() - startedAt >= waitMs) {
-      throw new Error('另一个 bun cli 操作正在运行，请稍后再试。');
+      throw new Error("后台服务正在运行，请稍后再试。");
     }
     await sleep(Math.min(retryIntervalMs, waitMs - (Date.now() - startedAt)));
   }
@@ -83,9 +87,10 @@ async function tryAcquireLock(target: string): Promise<boolean> {
 
 async function isStaleLock(target: string): Promise<boolean> {
   try {
-    const owner = await readFile(`${target}/owner`, 'utf8');
-    const pid = Number.parseInt(owner.split(/\r?\n/)[0] ?? '', 10);
-    if (!Number.isFinite(pid) || pid <= 0) return await isBrokenLockOldEnough(target);
+    const owner = await readFile(`${target}/owner`, "utf8");
+    const pid = Number.parseInt(owner.split(/\r?\n/)[0] ?? "", 10);
+    if (!Number.isFinite(pid) || pid <= 0)
+      return await isBrokenLockOldEnough(target);
     return !isProcessAlive(pid);
   } catch {
     return await isBrokenLockOldEnough(target);

@@ -15,14 +15,20 @@ describe("withLock", () => {
 
     await withLock(appHome, async () => undefined);
 
-    await expect(readFile(path.join(lockPath(appHome), "owner"), "utf8")).rejects.toThrow();
+    await expect(
+      readFile(path.join(lockPath(appHome), "owner"), "utf8"),
+    ).rejects.toThrow();
   });
 
   test("cleans up a stale lock whose owner process no longer exists", async () => {
     const appHome = await makeAppHome();
     const target = lockPath(appHome);
     await mkdir(target, { recursive: true });
-    await writeFile(path.join(target, "owner"), "999999\n2026-05-12T00:00:00.000Z\n", "utf8");
+    await writeFile(
+      path.join(target, "owner"),
+      "999999\n2026-05-12T00:00:00.000Z\n",
+      "utf8",
+    );
 
     let ran = false;
     await withLock(appHome, async () => {
@@ -36,10 +42,14 @@ describe("withLock", () => {
     const appHome = await makeAppHome();
     const target = lockPath(appHome);
     await mkdir(target, { recursive: true });
-    await writeFile(path.join(target, "owner"), `${process.pid}\n2026-05-12T00:00:00.000Z\n`, "utf8");
+    await writeFile(
+      path.join(target, "owner"),
+      `${process.pid}\n2026-05-12T00:00:00.000Z\n`,
+      "utf8",
+    );
 
     await expect(withLock(appHome, async () => undefined)).rejects.toThrow(
-      "另一个 bun cli 操作正在运行",
+      "后台服务正在运行",
     );
   });
 
@@ -47,12 +57,16 @@ describe("withLock", () => {
     const appHome = await makeAppHome();
     const target = lockPath(appHome);
     await mkdir(target, { recursive: true });
-    await writeFile(path.join(target, "owner"), `${process.pid}\n2026-05-12T00:00:00.000Z\n`, "utf8");
+    await writeFile(
+      path.join(target, "owner"),
+      `${process.pid}\n2026-05-12T00:00:00.000Z\n`,
+      "utf8",
+    );
     const old = new Date(Date.now() - 5 * 60_000);
     await utimes(target, old, old);
 
     await expect(withLock(appHome, async () => undefined)).rejects.toThrow(
-      "另一个 bun cli 操作正在运行",
+      "后台服务正在运行",
     );
   });
 
