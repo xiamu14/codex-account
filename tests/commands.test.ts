@@ -287,6 +287,7 @@ describe("quotaCommand", () => {
     const context = await makeContext();
     context.codexBin = await writeFakeCodex(context.appHome, {
       planType: null,
+      weeklyPercentLeft: null,
     });
     const authPath = path.join(context.appHome, "auth.json");
     await writeFile(authPath, '{"token":"one"}', "utf8");
@@ -302,6 +303,57 @@ describe("quotaCommand", () => {
     const meta = await store.readMeta("user@example.com");
     expect(meta?.email).toBe("fresh@example.com");
     expect(meta?.planType).toBe("free");
+    expect(meta?.subscriptionExpiresAt).toBeNull();
+  });
+
+  test("keeps a paid plan when account refresh omits plan but weekly quota exists", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: null,
+      weeklyPercentLeft: 99,
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("plus");
+    expect(meta?.subscriptionExpiresAt).toBeNull();
+  });
+
+  test("restores a paid plan from existing weekly quota when quota refresh fails", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: "free",
+      quotaError: "failed to fetch codex rate limits",
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "free",
+      subscriptionExpiresAt: null,
+    });
+    await store.writeQuota("user@example.com", {
+      fiveHour: { percentLeft: 99, resetsAt: null, rawReset: null },
+      weekly: { percentLeft: 99, resetsAt: null, rawReset: null },
+      updatedAt: "2026-05-21T00:00:00.000Z",
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("plus");
     expect(meta?.subscriptionExpiresAt).toBeNull();
   });
 

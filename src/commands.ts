@@ -353,12 +353,17 @@ async function refreshAccountQuota(
       runHome,
       context.cwd,
     );
+    const [existingMeta, existingQuota] = await Promise.all([
+      store.readMeta(alias),
+      store.readQuota(alias),
+    ]);
     const account = normalizeAccountPlanFromQuota(
       snapshot.account,
-      snapshot.quota,
+      snapshot.quota ?? existingQuota,
+      existingMeta?.planType ?? null,
     );
     await store.writeMeta(
-      mergeMeta(alias, await store.readMeta(alias), account, {
+      mergeMeta(alias, existingMeta, account, {
         overwritePlanTypeWithNull: true,
         clearSubscriptionIfNotSubscribed: true,
       }),
@@ -1059,6 +1064,7 @@ function normalizeAccountPlanFromQuota(
     subscriptionExpiresAt: string | null;
   },
   quota: AccountQuota | null,
+  existingPlanType: string | null = null,
 ): {
   email: string | null;
   planType: string | null;
@@ -1074,6 +1080,16 @@ function normalizeAccountPlanFromQuota(
     return {
       ...account,
       planType: "free",
+    };
+  }
+  if (
+    !isSubscriptionPlan(account.planType) &&
+    quota !== null &&
+    hasUsableWeeklyQuota(quota)
+  ) {
+    return {
+      ...account,
+      planType: isSubscriptionPlan(existingPlanType) ? existingPlanType : "plus",
     };
   }
   return account;
