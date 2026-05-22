@@ -284,6 +284,52 @@ export async function quotaCommand(
   });
 }
 
+export async function retryFailedQuotaCommand(
+  context: CommandContext,
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const current = await readAutoQuotaState(context.appHome);
+    const aliases = Object.keys(current.lastFailureByAlias);
+    if (aliases.length === 0) {
+      context.stdout.write("没有失败记录可重试。\n");
+      return;
+    }
+
+    const now = new Date();
+    const quotaFetches: string[] = [];
+    const failures: Record<string, string> = {};
+    const recoveredAliases: string[] = [];
+
+    for (const [index, alias] of aliases.entries()) {
+      await waitBeforeQuotaRefresh(index, aliases.length);
+      const result = await refreshQuotaQuietly(context, store, alias);
+      if (result.quota === null) {
+        failures[alias] = formatAutoQuotaFailure(alias, result.error);
+        context.stdout.write(`已重试 ${alias}，额度未刷新。\n`);
+        continue;
+      }
+      quotaFetches.push(alias);
+      recoveredAliases.push(alias);
+      context.stdout.write(`已刷新 ${alias}\n`);
+    }
+
+    await writeAutoQuotaState(context.appHome, {
+      ...current,
+      lastTickAt: now.toISOString(),
+      lastQuotaFetchAt:
+        quotaFetches.length > 0 ? now.toISOString() : current.lastQuotaFetchAt,
+      lastFailureByAlias: failures,
+      consecutiveFailureCountByAlias: mergeFailureCounts(
+        current.consecutiveFailureCountByAlias,
+        failures,
+        recoveredAliases,
+      ),
+      lastQuotaFetchAliases: quotaFetches,
+    });
+  });
+}
+
 export async function callCommand(
   context: CommandContext,
   options: { select?: boolean; aliases?: string[] } = {},

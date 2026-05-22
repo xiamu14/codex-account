@@ -126,7 +126,7 @@ export function App() {
           toast.custom(
             (t) => (
               <ToastAlert.Root
-                message="已重新刷新额度。"
+                message="已开始重新刷新额度。"
                 status="success"
                 t={t}
               />

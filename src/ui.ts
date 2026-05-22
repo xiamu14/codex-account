@@ -12,7 +12,7 @@ import {
   getAccountUsagePriorityByAlias,
   getRecommendedNextAlias,
 } from "./account-priority.ts";
-import { activeCommand, quotaCommand } from "./commands.ts";
+import { activeCommand, retryFailedQuotaCommand } from "./commands.ts";
 import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
 import { AccountStore } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
@@ -26,6 +26,7 @@ const UI_EVENT_HEARTBEAT_DATA = "ok";
 const UI_LOCK_WAIT_MS = 30_000;
 const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
 const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
+let quotaRetryJob: Promise<void> | null = null;
 
 export async function uiCommand(
   context: CommandContext,
@@ -69,8 +70,18 @@ export async function uiCommand(
   });
   app.post("/api/quota/retry", async (c) => {
     try {
-      await quotaCommand(context);
-      return c.json(await readStatus(context));
+      if (quotaRetryJob === null) {
+        quotaRetryJob = retryFailedQuotaCommand(context)
+          .catch((error) => {
+            context.stderr.write(
+              `重试额度失败：${error instanceof Error ? error.message : String(error)}\n`,
+            );
+          })
+          .finally(() => {
+            quotaRetryJob = null;
+          });
+      }
+      return c.json(await readStatus(context), 202);
     } catch (error) {
       return c.text(
         error instanceof Error ? error.message : String(error),

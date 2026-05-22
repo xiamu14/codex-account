@@ -15,6 +15,7 @@ import {
   loginCommand,
   quotaCommand,
   refreshCommand,
+  retryFailedQuotaCommand,
   resolveAccountTarget,
   saveCommand,
   updateSubscriptionDateCommand,
@@ -479,6 +480,47 @@ describe("quotaCommand", () => {
     expect(await store.readQuota("selected@example.com")).not.toBeNull();
     expect(await store.readQuota("skipped@example.com")).toBeNull();
     expect(output.text).toContain("selected@example.com");
+    expect(output.text).not.toContain("skipped@example.com");
+  });
+
+  test("retries failed quota records and clears successful failures", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("failed@example.com", authPath, {
+      email: "failed@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("skipped@example.com", authPath, {
+      email: "skipped@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await writeAutoQuotaState(context.appHome, {
+      ...(await readAutoQuotaState(context.appHome)),
+      enabled: true,
+      lastFailureByAlias: {
+        "failed@example.com": "读取额度失败。",
+      },
+      consecutiveFailureCountByAlias: {
+        "failed@example.com": 1,
+      },
+    });
+
+    await retryFailedQuotaCommand(context);
+
+    const state = await readAutoQuotaState(context.appHome);
+    expect(state.lastFailureByAlias).toEqual({});
+    expect(state.consecutiveFailureCountByAlias["failed@example.com"]).toBeUndefined();
+    expect(state.lastQuotaFetchAliases).toEqual(["failed@example.com"]);
+    expect(await store.readQuota("failed@example.com")).not.toBeNull();
+    expect(await store.readQuota("skipped@example.com")).toBeNull();
+    expect(output.text).toContain("已刷新 failed@example.com");
     expect(output.text).not.toContain("skipped@example.com");
   });
 });
