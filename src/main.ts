@@ -46,6 +46,7 @@ function usage(): string {
         ["bun cli uninstall", "卸载 Web UI 与定时任务"],
         ["bun cli start", "启动 Web UI 与定时任务"],
         ["bun cli stop", "停止 Web UI 与定时任务"],
+        ["bun cli restart", "重启 Web UI 与定时任务"],
       ],
     },
     {
@@ -138,6 +139,15 @@ async function run(argv: string[]): Promise<number> {
       await stopLaunchdServices();
       process.stdout.write("后台服务已停止。\n");
       return 0;
+    case "restart":
+      if (argv[1] !== undefined) {
+        throw new Error("restart 不需要参数。");
+      }
+      await stopLaunchdServices();
+      const context = await buildContext();
+      await startLaunchdServices(context);
+      process.stdout.write("后台服务已重启。\n");
+      return 0;
     case "save": {
       const context = await buildContext();
       if (argv[1] !== undefined) {
@@ -179,8 +189,7 @@ async function run(argv: string[]): Promise<number> {
       if (argv[1] !== undefined && argv[1] !== "--select") {
         throw new Error("call 只支持 --select。");
       }
-      if (argv[2] !== undefined)
-        throw new Error("call 只支持一个参数。");
+      if (argv[2] !== undefined) throw new Error("call 只支持一个参数。");
       {
         const context = await buildContext();
         await callCommand(context, { select: argv[1] === "--select" });
@@ -219,8 +228,7 @@ async function run(argv: string[]): Promise<number> {
       }
       return 0;
     case "refresh":
-      if (argv[2] !== undefined)
-        throw new Error("refresh 最多接收一个账号。");
+      if (argv[2] !== undefined) throw new Error("refresh 最多接收一个账号。");
       {
         const context = await buildContext();
         await refreshCommand(context, argv[1]);
@@ -230,9 +238,7 @@ async function run(argv: string[]): Promise<number> {
     case "subscription": {
       const context = await buildContext();
       if (argv[1] !== undefined) {
-        throw new Error(
-          "subscription 不需要参数。",
-        );
+        throw new Error("subscription 不需要参数。");
       }
       await subscriptionCommand(context);
       return 0;
