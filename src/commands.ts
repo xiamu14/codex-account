@@ -1,5 +1,8 @@
 import path from "node:path";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import chalk from "chalk";
 import dayjs from "dayjs";
 import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
@@ -19,10 +22,25 @@ import {
   runCodexLogin,
 } from "./codex.ts";
 import { launchCodexDesktop, quitCodexDesktop } from "./desktop.ts";
-import { pathExists, removePath } from "./fs.ts";
+import { copyFileAtomic, pathExists, readJsonIfExists, removePath, writeJsonAtomic } from "./fs.ts";
 import { renderList } from "./format.ts";
+import {
+  isAccountMeta,
+  isAccountQuota,
+  isAccountsState,
+  isAutoQuotaState,
+} from "./guards.ts";
 import { withLock } from "./lock.ts";
-import { runsRoot } from "./paths.ts";
+import {
+  accountAuthPath,
+  accountHome,
+  accountMetaPath,
+  accountQuotaPath,
+  accountsRoot,
+  accountsStatePath,
+  autoQuotaStatePath,
+  runsRoot,
+} from "./paths.ts";
 import {
   confirm,
   createSpinner,
@@ -67,6 +85,141 @@ const AUTO_QUOTA_SERVICE_MIN_DELAY_MS =
   AUTO_QUOTA_MIN_INTERVAL_MINUTES * 60_000;
 const AUTO_QUOTA_SERVICE_MAX_DELAY_MS =
   AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000;
+const DEFAULT_EXPORT_FILE = "codex-account-export.tar.gz";
+const EXPORT_MARKER = ".codex-account-export.json";
+const execFileAsync = promisify(execFile);
+
+export async function exportCommand(
+  context: CommandContext,
+  file?: string,
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const state = await store.loadState();
+    const target = resolveTransferPath(context.cwd, file, DEFAULT_EXPORT_FILE);
+    const stagingRoot = await mkdtemp(path.join(tmpdir(), "cxa-export-"));
+    const staging = path.join(stagingRoot, ".codex-account");
+
+    try {
+      await prepareExportFile(target);
+      await writeJsonAtomic(path.join(staging, EXPORT_MARKER), {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+      });
+      await writeJsonAtomic(path.join(staging, "accounts.json"), state);
+      if (await pathExists(accountsRoot(context.appHome))) {
+        await cp(accountsRoot(context.appHome), path.join(staging, "accounts"), {
+          recursive: true,
+          force: true,
+        });
+      }
+      if (await pathExists(autoQuotaStatePath(context.appHome))) {
+        await copyFileAtomic(
+          autoQuotaStatePath(context.appHome),
+          path.join(staging, "auto-quota.json"),
+        );
+      }
+      await createCompressedExport(stagingRoot, target);
+    } finally {
+      await removePath(stagingRoot);
+    }
+
+    context.stdout.write(
+      `已导出 ${state.accounts.length} 个账号到 ${target}。\n`,
+    );
+  });
+}
+
+export async function importCommand(
+  context: CommandContext,
+  file?: string,
+): Promise<void> {
+  await withLock(context.appHome, async () => {
+    const archive = resolveTransferPath(context.cwd, file, DEFAULT_EXPORT_FILE);
+    const extractRoot = await mkdtemp(path.join(tmpdir(), "cxa-import-"));
+    try {
+      await extractCompressedExport(archive, extractRoot);
+      const source = await resolveImportRoot(extractRoot);
+      const importedState = await readImportState(source);
+      const currentStore = new AccountStore(context.appHome);
+      const currentState = await currentStore.loadState();
+      const mergedAccounts = new Map(
+        currentState.accounts.map((account) => [account.alias, account]),
+      );
+
+      for (const account of importedState.accounts) {
+        assertAlias(account.alias);
+        const sourceHome = path.join(source, "accounts", account.alias);
+        const sourceAuth = path.join(sourceHome, "auth.json");
+        if (!(await pathExists(sourceAuth))) {
+          throw new Error(`导入失败：账号 ${account.alias} 缺少 auth.json。`);
+        }
+        await validateOptionalImportJson(
+          path.join(sourceHome, "meta.json"),
+          isAccountMeta,
+          `账号 ${account.alias} 的 meta.json 格式不正确。`,
+        );
+        await validateOptionalImportJson(
+          path.join(sourceHome, "quota.json"),
+          isAccountQuota,
+          `账号 ${account.alias} 的 quota.json 格式不正确。`,
+        );
+      }
+      await validateOptionalImportJson(
+        path.join(source, "auto-quota.json"),
+        isAutoQuotaState,
+        "auto-quota.json 格式不正确。",
+      );
+
+      for (const account of importedState.accounts) {
+        const sourceHome = path.join(source, "accounts", account.alias);
+        const sourceAuth = path.join(sourceHome, "auth.json");
+        const targetHome = accountHome(context.appHome, account.alias);
+        await removePath(targetHome);
+        await mkdir(targetHome, { recursive: true });
+        await copyFileAtomic(sourceAuth, accountAuthPath(context.appHome, account.alias));
+        if (await pathExists(path.join(sourceHome, "meta.json"))) {
+          await copyFileAtomic(
+            path.join(sourceHome, "meta.json"),
+            accountMetaPath(context.appHome, account.alias),
+          );
+        }
+        if (await pathExists(path.join(sourceHome, "quota.json"))) {
+          await copyFileAtomic(
+            path.join(sourceHome, "quota.json"),
+            accountQuotaPath(context.appHome, account.alias),
+          );
+        }
+        mergedAccounts.set(account.alias, account);
+      }
+
+      const activeAccount =
+        importedState.activeAccount !== null &&
+        mergedAccounts.has(importedState.activeAccount)
+          ? importedState.activeAccount
+          : currentState.activeAccount;
+      await writeJsonAtomic(accountsStatePath(context.appHome), {
+        version: 1,
+        accounts: [...mergedAccounts.values()],
+        activeAccount,
+        updatedAt: new Date().toISOString(),
+      } satisfies AccountsState);
+
+      if (await pathExists(path.join(source, "auto-quota.json"))) {
+        await copyFileAtomic(
+          path.join(source, "auto-quota.json"),
+          autoQuotaStatePath(context.appHome),
+        );
+      }
+
+      context.stdout.write(
+        `已导入 ${importedState.accounts.length} 个账号。运行 bun cli list 查看。\n`,
+      );
+    } finally {
+      await removePath(extractRoot);
+    }
+  });
+}
 
 export async function saveCommand(
   context: CommandContext,
@@ -161,6 +314,84 @@ export async function loginCommand(
 export async function listCommand(context: CommandContext): Promise<void> {
   const store = new AccountStore(context.appHome);
   context.stdout.write(`${renderList(await store.listSummaries())}\n`);
+}
+
+function resolveTransferPath(
+  cwd: string,
+  target: string | undefined,
+  fallback: string,
+): string {
+  return path.resolve(cwd, target ?? fallback);
+}
+
+async function prepareExportFile(target: string): Promise<void> {
+  if (await pathExists(target)) {
+    await removePath(target);
+  }
+  await mkdir(path.dirname(target), { recursive: true });
+}
+
+async function createCompressedExport(
+  stagingRoot: string,
+  target: string,
+): Promise<void> {
+  try {
+    await execFileAsync("tar", ["-czf", target, "-C", stagingRoot, ".codex-account"]);
+  } catch (error) {
+    throw new Error(`创建导出文件失败：${formatProcessError(error)}`);
+  }
+}
+
+async function extractCompressedExport(
+  archive: string,
+  target: string,
+): Promise<void> {
+  if (!(await pathExists(archive))) {
+    throw new Error(`导入文件不存在：${archive}`);
+  }
+  try {
+    await execFileAsync("tar", ["-xzf", archive, "-C", target]);
+  } catch (error) {
+    throw new Error(`读取导入文件失败：${formatProcessError(error)}`);
+  }
+}
+
+function formatProcessError(error: unknown): string {
+  if (error instanceof Error && error.message.trim() !== "") {
+    return error.message;
+  }
+  return "未知错误";
+}
+
+async function resolveImportRoot(target: string): Promise<string> {
+  if (await pathExists(path.join(target, "accounts.json"))) {
+    return target;
+  }
+  const nested = path.join(target, ".codex-account");
+  if (await pathExists(path.join(nested, "accounts.json"))) {
+    return nested;
+  }
+  throw new Error(`导入目录中没有 accounts.json：${target}`);
+}
+
+async function readImportState(source: string): Promise<AccountsState> {
+  const parsed = await readJsonIfExists(path.join(source, "accounts.json"));
+  if (!isAccountsState(parsed)) {
+    throw new Error("导入失败：accounts.json 格式不正确。");
+  }
+  return parsed;
+}
+
+async function validateOptionalImportJson<T>(
+  target: string,
+  guard: (value: unknown) => value is T,
+  message: string,
+): Promise<void> {
+  if (!(await pathExists(target))) return;
+  const parsed = JSON.parse(await readFile(target, "utf8")) as unknown;
+  if (!guard(parsed)) {
+    throw new Error(message);
+  }
 }
 
 export async function deleteCommand(

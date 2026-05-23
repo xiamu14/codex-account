@@ -17,6 +17,9 @@ export function assertAlias(alias: string): void {
   if (trimmed.length === 0) {
     throw new Error('请输入账号别名。');
   }
+  if (trimmed === '.' || trimmed === '..') {
+    throw new Error('账号别名不能是点或双点。');
+  }
   if (!/^[A-Za-z0-9._@+-]+$/.test(trimmed)) {
     throw new Error('账号别名只能包含字母、数字、@、点、下划线和短横线。');
   }

@@ -9,6 +9,8 @@ import {
   callCommand,
   deactiveCommand,
   deleteCommand,
+  exportCommand,
+  importCommand,
   listCommand,
   loginCommand,
   quotaCommand,
@@ -53,6 +55,8 @@ function usage(): string {
       rows: [
         ["bun cli save", "保存当前账号"],
         ["bun cli login", "登录并保存账号"],
+        ["bun cli export", "导出账号和 token"],
+        ["bun cli import", "导入账号和 token"],
         ["bun cli deactive", "退出当前账号"],
         ["bun cli delete", "删除账号"],
         ["bun cli refresh", "刷新账号 token"],
@@ -153,6 +157,22 @@ async function run(argv: string[]): Promise<number> {
         throw new Error("login 不需要参数。");
       }
       await loginCommand(context);
+      return 0;
+    }
+    case "export": {
+      if (argv[2] !== undefined) {
+        throw new Error("export 最多接收一个导出文件路径。");
+      }
+      const context = await buildContext();
+      await exportCommand(context, argv[1]);
+      return 0;
+    }
+    case "import": {
+      if (argv[2] !== undefined) {
+        throw new Error("import 最多接收一个导入文件路径。");
+      }
+      const context = await buildContext();
+      await importCommand(context, argv[1]);
       return 0;
     }
     case "list": {
