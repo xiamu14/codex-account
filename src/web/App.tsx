@@ -461,7 +461,7 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
         <MetadataBadge color="blue" label={`${accounts.length} accounts`} />
       </div>
       <Divider.Root className="my-5" />
-      <div className="max-h-100 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-stone-300 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-stone-100">
+      <div className="max-h-100 overflow-y-auto [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-stone-300 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-stone-100">
         {accounts.length === 0 ? (
           <div className="rounded-20 border border-dashed border-stroke-soft-200 p-8 text-center text-paragraph-sm text-text-sub-600">
             还没有保存账号
