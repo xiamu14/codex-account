@@ -183,7 +183,6 @@ function Dashboard({
           accounts={status.accounts}
           nextQuotaFetchAt={status.quota.nextCheckAt}
         />
-        <QuotaResetCard accounts={status.accounts} />
       </section>
       <section className="grid min-w-0 content-start gap-4">
         <QuotaStatusCard quota={status.quota} />
@@ -287,33 +286,6 @@ function QuotaRefreshCard({
   );
 }
 
-function QuotaResetCard({ accounts }: { accounts: UiStatus["accounts"] }) {
-  const orderedAccounts = sortAccountsForDisplay(accounts);
-  const successCount = accounts.filter(
-    (account) => account.lastCallStatus === "success",
-  ).length;
-
-  return (
-    <Card>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="text-label-lg text-text-strong-950">额度重置</div>
-          <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            额度重置触发状态
-          </div>
-        </div>
-        <MetadataBadge color="purple" label={`${successCount}`} />
-      </div>
-      <Divider.Root className="my-5" />
-      <div className={hiddenScrollListClass}>
-        {orderedAccounts.map((account) => (
-          <AccountResetRow account={account} key={account.alias} />
-        ))}
-      </div>
-    </Card>
-  );
-}
-
 function AccountStatusRow({
   description,
   label,
@@ -369,32 +341,6 @@ function AccountStatusBadge({
   }
 
   return <MetadataBadge color={status.color} label={status.label} />;
-}
-
-function AccountResetRow({
-  account,
-}: {
-  account: UiStatus["accounts"][number];
-}) {
-  if (account.lastCallStatus === "success") {
-    return (
-      <AccountStatusRow
-        description="最近一轮已成功触发 reset call。"
-        label={formatAccountDisplayName(account.alias)}
-        status={{ color: "green", label: "success" }}
-        value={formatDateTime(account.lastCallAt)}
-      />
-    );
-  }
-
-  return (
-    <AccountStatusRow
-      description={`下次重置：${formatDateTime(account.nextRefreshAt)}`}
-      label={formatAccountDisplayName(account.alias)}
-      status={{ color: "gray", label: "waiting" }}
-      value=""
-    />
-  );
 }
 
 function UsagePriorityBadge({
@@ -500,23 +446,38 @@ function SwitchAccountCard({
   const inactiveAccounts = sortAccountsForUsage(accounts).filter(
     (account) => account.alias !== activeAlias,
   );
-  const hasUsableInactiveAccount = inactiveAccounts.some(
+  const usableInactiveAccounts = inactiveAccounts.filter(
     (account) => account.usagePriority.status === "usable",
   );
+  const hasUsableInactiveAccount = usableInactiveAccounts.length > 0;
   const recommendedAlias =
-    inactiveAccounts.find((account) => account.isRecommendedNext)?.alias ?? "";
-  const defaultAlias = recommendedAlias || inactiveAccounts[0]?.alias || "";
+    usableInactiveAccounts.find((account) => account.isRecommendedNext)?.alias ??
+    "";
+  const defaultAlias = recommendedAlias || usableInactiveAccounts[0]?.alias || "";
+  const inactiveAccountKey = inactiveAccounts
+    .map((account) => `${account.alias}:${account.usagePriority.status}`)
+    .join("|");
   const [selectedAlias, setSelectedAlias] = useState(defaultAlias);
 
   useEffect(() => {
-    setSelectedAlias(defaultAlias);
-  }, [defaultAlias]);
+    setSelectedAlias((currentAlias) => {
+      const currentAccount = inactiveAccounts.find(
+        (account) => account.alias === currentAlias,
+      );
+      if (currentAccount?.usagePriority.status === "usable") {
+        return currentAlias;
+      }
+      return defaultAlias;
+    });
+  }, [defaultAlias, inactiveAccountKey]);
 
   const selectedAccount =
     inactiveAccounts.find((account) => account.alias === selectedAlias) ?? null;
+  const selectedAccountIsUsable =
+    selectedAccount?.usagePriority.status === "usable";
   const canActivate =
     selectedAlias.trim().length > 0 &&
-    hasUsableInactiveAccount &&
+    selectedAccountIsUsable &&
     !isActivating;
   const showRecommendation =
     recommendedAlias !== "" && selectedAlias === recommendedAlias;
@@ -548,7 +509,11 @@ function SwitchAccountCard({
             </Select.Trigger>
             <Select.Content>
               {inactiveAccounts.map((account) => (
-                <Select.Item key={account.alias} value={account.alias}>
+                <Select.Item
+                  disabled={account.usagePriority.status !== "usable"}
+                  key={account.alias}
+                  value={account.alias}
+                >
                   {formatAccountDisplayName(account.alias)}
                 </Select.Item>
               ))}
@@ -586,7 +551,7 @@ function LoadingSpinner() {
   return (
     <span
       aria-hidden="true"
-      className="size-4 animate-spin rounded-full border-2 border-static-white/45 border-t-static-white"
+      className="size-4 animate-spin rounded-full border-2 border-text-disabled-300 border-t-text-strong-950"
     />
   );
 }
