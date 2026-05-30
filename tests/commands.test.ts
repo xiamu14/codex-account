@@ -11,7 +11,9 @@ import {
   callCommand,
   deactiveCommand,
   deleteCommand,
+  exportCommand,
   findSavedAccount,
+  importCommand,
   loginCommand,
   quotaCommand,
   refreshCommand,
@@ -178,6 +180,71 @@ describe("loginCommand", () => {
     expect(await readFile(await store.authPath("new-account"), "utf8")).toBe('{"token":"fresh"}');
     await expect(readFile(path.join(context.codexHome, "auth.json"), "utf8")).rejects.toThrow();
     expect(output.text).toContain("已保存 new-account");
+  });
+});
+
+describe("account transfer commands", () => {
+  test("exports accounts to the default compressed file and imports them", async () => {
+    const exportOutput = new CaptureStream();
+    const source = await makeContext();
+    source.stdout = exportOutput as unknown as NodeJS.WriteStream;
+    const authPath = path.join(source.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"saved"}', "utf8");
+    const store = new AccountStore(source.appHome);
+    await store.createAccount("work", authPath, {
+      email: "work@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: "2026-06-01T00:00:00.000Z",
+    });
+    await store.writeQuota("work", makeQuota(88, futureIso()));
+    await store.setActive("work");
+    await enableAutoQuota(source.appHome);
+
+    await exportCommand(source);
+
+    const archive = path.join(source.cwd, "codex-account-export.tar.gz");
+    expect(await readFile(archive)).toBeInstanceOf(Buffer);
+    expect(exportOutput.text).toContain("已导出 1 个账号");
+
+    const importOutput = new CaptureStream();
+    const target = await makeContext();
+    target.stdout = importOutput as unknown as NodeJS.WriteStream;
+
+    await importCommand(target, archive);
+
+    const importedStore = new AccountStore(target.appHome);
+    const summaries = await importedStore.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.alias).toBe("work");
+    expect(summaries[0]?.isActive).toBe(true);
+    expect(summaries[0]?.meta?.email).toBe("work@example.com");
+    expect(summaries[0]?.quota?.fiveHour?.percentLeft).toBe(88);
+    expect(await readFile(await importedStore.authPath("work"), "utf8")).toBe(
+      '{"token":"saved"}',
+    );
+    expect((await readAutoQuotaState(target.appHome)).enabled).toBe(true);
+    expect(importOutput.text).toContain("已导入 1 个账号");
+  });
+
+  test("imports from the default compressed file name", async () => {
+    const source = await makeContext();
+    const authPath = path.join(source.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"saved"}', "utf8");
+    const store = new AccountStore(source.appHome);
+    await store.createAccount("default-name", authPath, {
+      email: null,
+      planType: null,
+      subscriptionExpiresAt: null,
+    });
+    await exportCommand(source);
+
+    const target = await makeContext();
+    target.cwd = source.cwd;
+    await importCommand(target);
+
+    expect((await new AccountStore(target.appHome).listSummaries())[0]?.alias).toBe(
+      "default-name",
+    );
   });
 });
 

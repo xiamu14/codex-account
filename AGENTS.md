@@ -20,6 +20,8 @@ bun cli uninstall
 
 bun cli save
 bun cli login
+bun cli export
+bun cli import
 bun cli list
 bun cli active [alias]
 bun cli deactive

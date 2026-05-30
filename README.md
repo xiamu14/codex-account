@@ -103,6 +103,33 @@ bun cli subscription
 - `bun cli refresh`：刷新账号 token
 - `bun cli subscription`：更新订阅到期时间
 
+## 迁移账号
+
+在旧设备导出账号和 token：
+
+```bash
+bun cli export
+```
+
+默认会生成压缩文件：
+
+```text
+codex-account-export.tar.gz
+```
+
+把这个文件传到新设备的 `codex-account` 源码目录后导入：
+
+```bash
+bun cli import
+```
+
+也可以指定文件路径：
+
+```bash
+bun cli export /path/to/codex-account-export.tar.gz
+bun cli import /path/to/codex-account-export.tar.gz
+```
+
 ## 额度刷新
 
 手动刷新额度：
@@ -136,4 +163,3 @@ bun cli stop
 ```bash
 bun cli uninstall
 ```
-
