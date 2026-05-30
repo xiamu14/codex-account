@@ -20,14 +20,13 @@ export async function installLaunchdServices(
 ): Promise<void> {
   assertMacOS();
   const projectRoot = resolveProjectRoot();
-  const portlessBin = path.join(projectRoot, "node_modules", ".bin", "portless");
   const logsRoot = path.join(context.appHome, "logs");
 
   await mkdir(launchAgentsRoot(), { recursive: true });
   await mkdir(logsRoot, { recursive: true });
   await buildWebUi(projectRoot);
 
-  for (const service of buildServices(projectRoot, portlessBin)) {
+  for (const service of buildServices(projectRoot)) {
     await writeFile(
       service.plistPath,
       renderPlist({
@@ -47,7 +46,7 @@ export async function uninstallLaunchdServices(
 ): Promise<void> {
   assertMacOS();
   await stopLaunchdServices();
-  for (const service of buildServices(resolveProjectRoot(), "")) {
+  for (const service of buildServices(resolveProjectRoot())) {
     await rm(service.plistPath, { force: true });
   }
 }
@@ -57,7 +56,7 @@ export async function startLaunchdServices(
 ): Promise<void> {
   assertMacOS();
   await installLaunchdServices(context);
-  for (const service of buildServices(resolveProjectRoot(), "")) {
+  for (const service of buildServices(resolveProjectRoot())) {
     await launchctl(["bootout", launchDomain(), service.plistPath], true);
     await launchctl(["bootstrap", launchDomain(), service.plistPath], false);
   }
@@ -67,7 +66,7 @@ export async function stopLaunchdServices(
   _context?: CommandContext,
 ): Promise<void> {
   assertMacOS();
-  for (const service of buildServices(resolveProjectRoot(), "")) {
+  for (const service of buildServices(resolveProjectRoot())) {
     await launchctl(["bootout", launchDomain(), service.plistPath], true);
   }
 }
@@ -90,14 +89,22 @@ async function buildWebUi(projectRoot: string): Promise<void> {
   }
 }
 
-function buildServices(projectRoot: string, portlessBin: string): LaunchdService[] {
+export function buildServices(projectRoot: string): LaunchdService[] {
   const entrypoint = path.join(projectRoot, "src", "main.ts");
+  const portlessEntrypoint = path.join(
+    projectRoot,
+    "node_modules",
+    "portless",
+    "dist",
+    "cli.js",
+  );
   return [
     {
       label: WEB_LABEL,
       plistPath: path.join(launchAgentsRoot(), `${WEB_LABEL}.plist`),
       programArguments: [
-        portlessBin || path.join(projectRoot, "node_modules", ".bin", "portless"),
+        process.execPath,
+        portlessEntrypoint,
         PORTLESS_NAME,
         "--app-port",
         String(UI_APP_PORT),

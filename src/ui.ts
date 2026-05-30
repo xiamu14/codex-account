@@ -156,13 +156,15 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
     import.meta.dir,
     "..",
     "node_modules",
-    ".bin",
     "portless",
+    "dist",
+    "cli.js",
   );
   const publicUrl = `http://${PORTLESS_NAME}.localhost:${PORTLESS_PROXY_PORT}`;
   const child = spawn(
-    portlessBin,
+    process.execPath,
     [
+      portlessBin,
       PORTLESS_NAME,
       "--app-port",
       String(UI_APP_PORT),
