@@ -866,7 +866,7 @@ function QuotaToasts({
     toast.custom(
       (t) => (
         <ToastAlert.Root
-          message="自动刷新服务未运行，已重新启动。"
+          message="自动刷新服务重新启动"
           status="success"
           t={t}
         />
