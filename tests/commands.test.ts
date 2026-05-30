@@ -462,6 +462,62 @@ describe("quotaCommand", () => {
     expect(meta?.tokenInvalidReason).toBe("token 已失效");
   });
 
+  test("does not invalidate an account for a generic quota 401", async () => {
+    const output = new CaptureStream();
+    const errorOutput = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.stderr = errorOutput as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      quotaError: "failed to fetch codex rate limits: 401 Unauthorized",
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    expect(errorOutput.text).toContain("user@example.com: 读取额度失败");
+    expect(errorOutput.text).not.toContain("token 已失效");
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.tokenStatus).toBe("valid");
+    expect(meta?.tokenInvalidReason).toBeNull();
+  });
+
+  test("invalidates an account when quota reports an expired token", async () => {
+    const output = new CaptureStream();
+    const errorOutput = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    context.stderr = errorOutput as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      quotaError:
+        "failed to fetch codex rate limits: 401 Unauthorized body={\"error\":{\"message\":\"Provided authentication token is expired. Please try signing in again.\",\"code\":\"token_expired\"}} Failed to refresh token: refresh_token_reused",
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"one"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    expect(errorOutput.text).toContain(
+      "user@example.com: token 已失效。运行 bun cli refresh user@example.com。",
+    );
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.tokenStatus).toBe("invalid");
+    expect(meta?.tokenInvalidReason).toBe("token 已失效");
+  });
+
   test("skips quota refresh for accounts with invalid tokens", async () => {
     const errorOutput = new CaptureStream();
     const context = await makeContext();
@@ -842,6 +898,30 @@ describe("auto quota commands", () => {
     expect(autoState.lastSuccessAliases).toEqual(["low@example.com", "high@example.com"]);
     expect(autoState.handledFiveHourResets["low@example.com"]).toBe(reset);
     expect(autoState.handledFiveHourResets["high@example.com"]).toBe(reset);
+  });
+
+  test("tick does not invalidate a token for a generic auth failure", async () => {
+    const context = await makeContext();
+    const reset = pastIso();
+    context.codexBin = await writeCallFakeCodex(context.appHome, {
+      fiveHourReset: reset,
+    });
+    const authPath = path.join(context.appHome, "auth-required.json");
+    await writeFile(authPath, '{"token":"auth-required"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("auth-required@example.com", authPath, {
+      email: "auth-required@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.writeQuota("auth-required@example.com", makeQuota(80, reset));
+    await enableAutoQuota(context.appHome);
+
+    await autoQuotaTickCommand(context);
+
+    expect((await store.readMeta("auth-required@example.com"))?.tokenStatus).toBe(
+      "valid",
+    );
   });
 
   test("tick does not call free accounts when their 5h quota reset is due", async () => {
@@ -1348,6 +1428,10 @@ async function writeCallFakeCodex(
       "const auth = readFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), 'utf8');",
       "if (auth.includes('expired')) {",
       "  process.stderr.write('401 Unauthorized token_invalidated\\n');",
+      "  process.exit(1);",
+      "}",
+      "if (auth.includes('auth-required')) {",
+      "  process.stderr.write('login required\\n');",
       "  process.exit(1);",
       "}",
       "if (auth.includes('quota')) {",

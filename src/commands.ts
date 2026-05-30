@@ -581,6 +581,7 @@ export async function retryFailedQuotaCommand(
       const result = await refreshQuotaQuietly(context, store, alias);
       if (result.quota === null) {
         if (isTokenInvalidated(result.error)) {
+          logInvalidTokenFailure(context, alias, "retry-quota", result.error);
           invalidTokenAliases.push(alias);
           continue;
         }
@@ -732,6 +733,7 @@ async function callAccount(
   message: string;
   reply: string | null;
   error: string | null;
+  tokenInvalidated: boolean;
 }> {
   let runHome: string | null = null;
   try {
@@ -747,13 +749,21 @@ async function callAccount(
       context.cwd,
       call.message,
     );
-    return { alias: call.alias, message: call.message, reply, error: null };
+    return {
+      alias: call.alias,
+      message: call.message,
+      reply,
+      error: null,
+      tokenInvalidated: false,
+    };
   } catch (error) {
+    const rawError = error instanceof Error ? error.message : String(error);
     return {
       alias: call.alias,
       message: call.message,
       reply: null,
       error: formatCallFailure(call.alias, error),
+      tokenInvalidated: isTokenInvalidated(rawError),
     };
   } finally {
     if (runHome !== null) {
@@ -858,6 +868,7 @@ async function refreshAllQuotaForAutoStart(
     const result = await refreshQuotaQuietly(context, store, alias);
     if (result.quota === null) {
       if (isTokenInvalidated(result.error)) {
+        logInvalidTokenFailure(context, alias, "start-quota", result.error);
         invalidTokenAliases.push(alias);
         continue;
       }
@@ -1043,6 +1054,7 @@ export async function autoQuotaTickCommand(
       const fetched = await refreshQuotaQuietly(context, store, alias);
       if (fetched.quota === null) {
         if (isTokenInvalidated(fetched.error)) {
+          logInvalidTokenFailure(context, alias, "tick-quota", fetched.error);
           invalidTokenAliases.push(alias);
           continue;
         }
@@ -1102,7 +1114,8 @@ export async function autoQuotaTickCommand(
         message: pickCallMessage(),
       });
       if (result.error !== null) {
-        if (isTokenInvalidated(result.error)) {
+        if (result.tokenInvalidated) {
+          logInvalidTokenFailure(context, alias, "tick-call", result.error);
           invalidTokenAliases.push(alias);
           continue;
         }
@@ -1116,6 +1129,12 @@ export async function autoQuotaTickCommand(
       const refreshed = await refreshQuotaQuietly(context, store, alias);
       if (refreshed.quota === null) {
         if (isTokenInvalidated(refreshed.error)) {
+          logInvalidTokenFailure(
+            context,
+            alias,
+            "tick-post-call-quota",
+            refreshed.error,
+          );
           invalidTokenAliases.push(alias);
           continue;
         }
@@ -1641,11 +1660,16 @@ function pad(value: number): string {
 }
 
 function isTokenInvalidated(error: string | null): boolean {
+  const lower = error?.toLowerCase() ?? "";
   return Boolean(
-    error?.includes("token_invalidated") ||
-      error?.includes("401 Unauthorized") ||
-      error?.includes("token 已失效") ||
-      error?.includes("invalid token"),
+    lower.includes("token_invalidated") ||
+      lower.includes("token has been invalidated") ||
+      lower.includes("token_expired") ||
+      lower.includes("authentication token is expired") ||
+      lower.includes("refresh_token_reused") ||
+      lower.includes("refresh token was already used") ||
+      lower.includes("token 已失效") ||
+      lower.includes("invalid token"),
   );
 }
 
@@ -1657,6 +1681,24 @@ async function markInvalidTokenAliases(
   for (const alias of aliases) {
     await store.markTokenInvalid(alias, "token 已失效");
   }
+}
+
+function logInvalidTokenFailure(
+  context: CommandContext,
+  alias: string,
+  stage: string,
+  error: string | null,
+): void {
+  context.stderr.write(
+    `${JSON.stringify({
+      level: "warn",
+      event: "token_invalidated",
+      alias,
+      stage,
+      error,
+      at: new Date().toISOString(),
+    })}\n`,
+  );
 }
 
 function pickCallMessage(): string {
