@@ -32,6 +32,13 @@ export function isAccountMeta(value: unknown): value is AccountMeta {
     isNullableString(value.email) &&
     isNullableString(value.planType) &&
     isNullableString(value.subscriptionExpiresAt) &&
+    (value.tokenStatus === undefined ||
+      value.tokenStatus === "valid" ||
+      value.tokenStatus === "invalid") &&
+    (value.tokenInvalidatedAt === undefined ||
+      isNullableString(value.tokenInvalidatedAt)) &&
+    (value.tokenInvalidReason === undefined ||
+      isNullableString(value.tokenInvalidReason)) &&
     isString(value.createdAt) &&
     isString(value.updatedAt)
   );
@@ -86,6 +93,8 @@ export function isAutoQuotaState(value: unknown): value is AutoQuotaState {
     isStringRecord(value.lastFailureByAlias) &&
     isNumberRecord(value.consecutiveFailureCountByAlias) &&
     isStringArray(value.lastQuotaFetchAliases) &&
+    (value.invalidTokenAliases === undefined ||
+      isStringArray(value.invalidTokenAliases)) &&
     isStringRecord(value.handledFiveHourResets) &&
     isNullableString(value.lastWakeAt) &&
     isNumber(value.lastMissedCheckCount) &&

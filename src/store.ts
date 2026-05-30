@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import { readAuthAccountInfo } from './auth-jwt.ts';
 import { copyFileAtomic, pathExists, readJsonIfExists, removePath, writeJsonAtomic } from './fs.ts';
 import { isAccountMeta, isAccountQuota, isAccountsState } from './guards.ts';
 import {
@@ -11,6 +12,11 @@ import {
   runsRoot
 } from './paths.ts';
 import type { AccountMeta, AccountQuota, AccountSummary, AccountsState } from './types.ts';
+
+type CreateAccountMeta = Omit<
+  AccountMeta,
+  'alias' | 'createdAt' | 'updatedAt' | 'tokenStatus' | 'tokenInvalidatedAt' | 'tokenInvalidReason'
+>;
 
 export function assertAlias(alias: string): void {
   const trimmed = alias.trim();
@@ -74,7 +80,7 @@ export class AccountStore {
     }
   }
 
-  async createAccount(alias: string, authSourcePath: string, meta: Omit<AccountMeta, 'alias' | 'createdAt' | 'updatedAt'>): Promise<void> {
+  async createAccount(alias: string, authSourcePath: string, meta: CreateAccountMeta): Promise<void> {
     assertAlias(alias);
     const state = await this.loadState();
     if (state.accounts.some((account) => account.alias === alias)) {
@@ -89,6 +95,9 @@ export class AccountStore {
       email: meta.email,
       planType: meta.planType,
       subscriptionExpiresAt: meta.subscriptionExpiresAt,
+      tokenStatus: "valid",
+      tokenInvalidatedAt: null,
+      tokenInvalidReason: null,
       createdAt: now,
       updatedAt: now
     });
@@ -124,11 +133,16 @@ export class AccountStore {
     const summaries: AccountSummary[] = [];
     for (const account of state.accounts) {
       const alias = account.alias;
+      const hasAuth = await pathExists(accountAuthPath(this.appHome, alias));
+      const meta = await this.syncMetaFromAuthJwt(alias, account.createdAt, hasAuth);
       summaries.push({
         alias,
         isActive: state.activeAccount === alias,
-        hasAuth: await pathExists(accountAuthPath(this.appHome, alias)),
-        meta: await this.readMeta(alias),
+        hasAuth,
+        tokenStatus: hasAuth ? (meta?.tokenStatus ?? "valid") : "missing",
+        tokenInvalidatedAt: meta?.tokenInvalidatedAt ?? null,
+        tokenInvalidReason: meta?.tokenInvalidReason ?? null,
+        meta,
         quota: await this.readQuota(alias)
       });
     }
@@ -151,14 +165,98 @@ export class AccountStore {
     if (!isAccountMeta(parsed)) {
       throw new Error(`账号 ${alias} 的 meta.json 格式不正确。`);
     }
-    return parsed;
+    return normalizeAccountMeta(parsed);
   }
 
   async writeMeta(meta: AccountMeta): Promise<void> {
     await writeJsonAtomic(accountMetaPath(this.appHome, meta.alias), {
       ...meta,
+      tokenStatus: meta.tokenStatus ?? "valid",
+      tokenInvalidatedAt: meta.tokenInvalidatedAt ?? null,
+      tokenInvalidReason: meta.tokenInvalidReason ?? null,
       updatedAt: new Date().toISOString()
     });
+  }
+
+  async markTokenInvalid(alias: string, reason: string | null = null): Promise<void> {
+    const state = await this.loadState();
+    const meta = await this.readMeta(alias);
+    const now = new Date().toISOString();
+    await this.writeMeta({
+      alias,
+      email: meta?.email ?? null,
+      planType: meta?.planType ?? null,
+      subscriptionExpiresAt: meta?.subscriptionExpiresAt ?? null,
+      tokenStatus: "invalid",
+      tokenInvalidatedAt: now,
+      tokenInvalidReason: reason,
+      createdAt: meta?.createdAt ?? state.accounts.find((account) => account.alias === alias)?.createdAt ?? now,
+      updatedAt: now
+    });
+    if (state.activeAccount === alias) {
+      state.activeAccount = null;
+      await this.saveState(state);
+    }
+  }
+
+  async markTokenValid(alias: string): Promise<void> {
+    const meta = await this.readMeta(alias);
+    if (meta === null) return;
+    await this.writeMeta({
+      ...meta,
+      tokenStatus: "valid",
+      tokenInvalidatedAt: null,
+      tokenInvalidReason: null
+    });
+  }
+
+  private async syncMetaFromAuthJwt(
+    alias: string,
+    createdAt: string,
+    hasAuth: boolean
+  ): Promise<AccountMeta | null> {
+    const existing = await this.readMeta(alias);
+    if (!hasAuth) return existing;
+    const authAccount = await readAuthAccountInfo(accountAuthPath(this.appHome, alias));
+    if (authAccount === null) return existing;
+    if (
+      authAccount.email === null &&
+      authAccount.planType === null &&
+      authAccount.subscriptionExpiresAt === null
+    ) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const next: AccountMeta = {
+      alias,
+      email: existing?.email ?? authAccount.email,
+      planType: authAccount.planType ?? existing?.planType ?? null,
+      subscriptionExpiresAt:
+        authAccount.planType === "free"
+          ? null
+          : (authAccount.subscriptionExpiresAt ??
+            existing?.subscriptionExpiresAt ??
+            null),
+      createdAt: existing?.createdAt ?? createdAt,
+      tokenStatus: existing?.tokenStatus ?? "valid",
+      tokenInvalidatedAt: existing?.tokenInvalidatedAt ?? null,
+      tokenInvalidReason: existing?.tokenInvalidReason ?? null,
+      updatedAt: now
+    };
+    if (
+      existing !== null &&
+      existing.email === next.email &&
+      existing.planType === next.planType &&
+      existing.subscriptionExpiresAt === next.subscriptionExpiresAt &&
+      existing.tokenStatus === next.tokenStatus &&
+      existing.tokenInvalidatedAt === next.tokenInvalidatedAt &&
+      existing.tokenInvalidReason === next.tokenInvalidReason
+    ) {
+      return existing;
+    }
+    await this.writeMeta(next);
+    return next;
   }
 
   async readQuota(alias: string): Promise<AccountQuota | null> {
@@ -176,4 +274,13 @@ export class AccountStore {
       updatedAt: new Date().toISOString()
     });
   }
+}
+
+function normalizeAccountMeta(meta: AccountMeta): AccountMeta {
+  return {
+    ...meta,
+    tokenStatus: meta.tokenStatus ?? "valid",
+    tokenInvalidatedAt: meta.tokenInvalidatedAt ?? null,
+    tokenInvalidReason: meta.tokenInvalidReason ?? null
+  };
 }

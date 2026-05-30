@@ -125,6 +125,9 @@ function resolveUsagePriority(account: AccountSummary): AccountUsagePriority {
   const primaryWindow = inferLimitWindow(primary, quota?.updatedAt ?? null);
   const secondaryWindow = inferLimitWindow(secondary, quota?.updatedAt ?? null);
 
+  if (account.tokenStatus === "invalid") {
+    return unavailable("blocked", "invalid token", primaryWindow, secondaryWindow);
+  }
   if (!account.hasAuth) {
     return unavailable("unknown", "missing auth", primaryWindow, secondaryWindow);
   }
@@ -203,7 +206,14 @@ function buildSortKey(
   const primaryLeft = account.quota?.fiveHour?.percentLeft ?? UNKNOWN_TIME;
   const secondaryLeft = account.quota?.weekly?.percentLeft ?? UNKNOWN_TIME;
   return {
-    group: priority.status === "usable" ? 0 : priority.status === "unknown" ? 1 : 2,
+    group:
+      account.tokenStatus === "invalid"
+        ? 3
+        : priority.status === "usable"
+          ? 0
+          : priority.status === "unknown"
+            ? 1
+            : 2,
     nextRefillMs: dateTime(priority.nextRefillAt),
     availableMs: dateTime(priority.availableAt),
     primaryLeft,

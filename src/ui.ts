@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming";
 import {
   AUTO_QUOTA_MAX_INTERVAL_MINUTES,
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
+  migrateInvalidTokensFromAutoQuota,
   readAutoQuotaState,
 } from "./auto-quota.ts";
 import {
@@ -204,6 +205,7 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
 
 async function readStatus(context: CommandContext): Promise<UiStatus> {
   const store = new AccountStore(context.appHome);
+  await migrateInvalidTokensFromAutoQuota(context.appHome, store);
   let [accounts, autoState] = await Promise.all([
     store.listSummaries(),
     readAutoQuotaState(context.appHome),
@@ -239,6 +241,7 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       subscriptionExpiresAt: account.meta?.subscriptionExpiresAt ?? null,
       isActive: account.isActive,
       hasAuth: account.hasAuth,
+      isInvalidToken: account.tokenStatus === "invalid",
       quota: account.quota,
       usagePriority: priorityByAlias.get(account.alias) ?? {
         rank: null,

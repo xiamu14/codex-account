@@ -20,7 +20,6 @@ import {
   retryFailedQuotaCommand,
   resolveAccountTarget,
   saveCommand,
-  updateSubscriptionDateCommand,
 } from "../src/commands.ts";
 import { readAutoQuotaState, writeAutoQuotaState } from "../src/auto-quota.ts";
 import { autoQuotaStatePath } from "../src/paths.ts";
@@ -41,75 +40,6 @@ async function makeContext(): Promise<CommandContext> {
     stdin: process.stdin,
   };
 }
-
-describe("updateSubscriptionDateCommand", () => {
-  test("updates subscription expiry for an account", async () => {
-    const context = await makeContext();
-    const authPath = path.join(context.appHome, "auth.json");
-    await writeFile(authPath, '{"token":"one"}', "utf8");
-    const store = new AccountStore(context.appHome);
-    await store.createAccount("user@example.com", authPath, {
-      email: "user@example.com",
-      planType: "plus",
-      subscriptionExpiresAt: null,
-    });
-
-    await updateSubscriptionDateCommand(context, "2026-06-01", "user@example.com");
-
-    const meta = await store.readMeta("user@example.com");
-    expect(meta?.subscriptionExpiresAt).toContain("2026-06-01");
-  });
-
-  test("accepts natural language dates", async () => {
-    const context = await makeContext();
-    const authPath = path.join(context.appHome, "auth.json");
-    await writeFile(authPath, '{"token":"one"}', "utf8");
-    const store = new AccountStore(context.appHome);
-    await store.createAccount("user@example.com", authPath, {
-      email: "user@example.com",
-      planType: "plus",
-      subscriptionExpiresAt: null,
-    });
-
-    await updateSubscriptionDateCommand(context, "May 17, 2026", "user@example.com");
-
-    const meta = await store.readMeta("user@example.com");
-    expect(meta?.subscriptionExpiresAt).toContain("2026-05-17");
-  });
-
-  test("rejects invalid dates", async () => {
-    const context = await makeContext();
-    const authPath = path.join(context.appHome, "auth.json");
-    await writeFile(authPath, '{"token":"one"}', "utf8");
-    const store = new AccountStore(context.appHome);
-    await store.createAccount("user@example.com", authPath, {
-      email: "user@example.com",
-      planType: "plus",
-      subscriptionExpiresAt: null,
-    });
-
-    await expect(
-      updateSubscriptionDateCommand(context, "not a date", "user@example.com"),
-    ).rejects.toThrow("订阅日期无效");
-  });
-
-  test("falls back to the only stored account when alias is omitted", async () => {
-    const context = await makeContext();
-    const authPath = path.join(context.appHome, "auth.json");
-    await writeFile(authPath, '{"token":"one"}', "utf8");
-    const store = new AccountStore(context.appHome);
-    await store.createAccount("user@example.com", authPath, {
-      email: "user@example.com",
-      planType: "plus",
-      subscriptionExpiresAt: null,
-    });
-
-    await updateSubscriptionDateCommand(context, "2026-06-01");
-
-    const meta = await store.readMeta("user@example.com");
-    expect(meta?.subscriptionExpiresAt).toContain("2026-06-01");
-  });
-});
 
 describe("saveCommand", () => {
   test("rejects when Codex is not logged in", async () => {
@@ -322,6 +252,35 @@ describe("quotaCommand", () => {
     expect(output.text).toContain("5h limit      80% left");
   });
 
+  test("updates subscription expiry from the stored auth JWT", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: null,
+      weeklyPercentLeft: 99,
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, makeAuthJsonWithJwt({
+      email: "jwt@example.com",
+      "https://api.openai.com/auth": {
+        chatgpt_plan_type: "plus",
+        chatgpt_subscription_active_until: "2026-06-15T11:52:11+00:00",
+      },
+    }), "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: null,
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("plus");
+    expect(meta?.subscriptionExpiresAt).toBe("2026-06-15T11:52:11.000Z");
+  });
+
   test("keeps updating account metadata when quota refresh fails", async () => {
     const output = new CaptureStream();
     const errorOutput = new CaptureStream();
@@ -494,6 +453,47 @@ describe("quotaCommand", () => {
 
     expect(errorOutput.text).toContain(
       "user@example.com: token 已失效。运行 bun cli refresh user@example.com。",
+    );
+    const autoState = await readAutoQuotaState(context.appHome);
+    expect(autoState.invalidTokenAliases).toEqual([]);
+    expect(autoState.lastFailureByAlias).toEqual({});
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.tokenStatus).toBe("invalid");
+    expect(meta?.tokenInvalidReason).toBe("token 已失效");
+  });
+
+  test("skips quota refresh for accounts with invalid tokens", async () => {
+    const errorOutput = new CaptureStream();
+    const context = await makeContext();
+    context.stderr = errorOutput as unknown as NodeJS.WriteStream;
+    context.codexBin = await writeFakeCodex(context.appHome);
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, makeAuthJsonWithJwt({
+      email: "invalid@example.com",
+      "https://api.openai.com/auth": {
+        chatgpt_plan_type: "plus",
+        chatgpt_subscription_active_until: "2026-06-15T11:52:11+00:00",
+      },
+    }), "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("invalid@example.com", authPath, {
+      email: "invalid@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await writeAutoQuotaState(context.appHome, {
+      ...(await readAutoQuotaState(context.appHome)),
+      invalidTokenAliases: ["invalid@example.com"],
+    });
+
+    await quotaCommand(context);
+
+    expect(await store.readQuota("invalid@example.com")).toBeNull();
+    expect((await store.readMeta("invalid@example.com"))?.subscriptionExpiresAt).toBe(
+      "2026-06-15T11:52:11.000Z",
+    );
+    expect(errorOutput.text).toContain(
+      "已跳过 token 失效的账号：invalid@example.com",
     );
   });
 
@@ -900,12 +900,13 @@ describe("auto quota commands", () => {
       lastCallAt: new Date().toISOString(),
       lastSuccessAliases: ["work@example.com"],
       lastFailureByAlias: {
-        "old@example.com": "token 已失效，请运行 bun cli refresh old@example.com",
+        "old@example.com": "读取额度失败。",
       },
       consecutiveFailureCountByAlias: {
         "old@example.com": 3,
       },
       lastQuotaFetchAliases: ["work@example.com"],
+      invalidTokenAliases: [],
       handledFiveHourResets: {},
       lastWakeAt: null,
       lastMissedCheckCount: 0,
@@ -921,7 +922,7 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("work@example.com");
     expect(output.text).toContain("失败账号：1 个");
     expect(output.text).toContain("old@example.com");
-    expect(output.text).toContain("token 已失效");
+    expect(output.text).toContain("读取额度失败");
     expect(output.text).toContain("连续失败 3 次");
     expect(output.text).toContain("已暂停");
     expect(output.text).toMatch(/work@example\.com\s{2,}(今天|明天)/);
@@ -1117,11 +1118,17 @@ function makeSummary(
     alias,
     isActive,
     hasAuth: true,
+    tokenStatus: "valid",
+    tokenInvalidatedAt: null,
+    tokenInvalidReason: null,
     meta: {
       alias,
       email,
       planType: "plus",
       subscriptionExpiresAt: null,
+      tokenStatus: "valid",
+      tokenInvalidatedAt: null,
+      tokenInvalidReason: null,
       createdAt: "2026-05-11T00:00:00.000Z",
       updatedAt: "2026-05-11T00:00:00.000Z",
     },
@@ -1142,6 +1149,7 @@ async function enableAutoQuota(appHome: string): Promise<void> {
     lastFailureByAlias: {},
     consecutiveFailureCountByAlias: {},
     lastQuotaFetchAliases: [],
+    invalidTokenAliases: [],
     handledFiveHourResets: {},
     lastWakeAt: null,
     lastMissedCheckCount: 0,
@@ -1175,6 +1183,26 @@ function futureIso(): string {
 
 function nearFutureIso(): string {
   return new Date(Date.now() + 10_000).toISOString();
+}
+
+function makeAuthJsonWithJwt(payload: unknown): string {
+  return JSON.stringify({
+    tokens: {
+      id_token: [
+        encodeBase64Url({ alg: "none", typ: "JWT" }),
+        encodeBase64Url(payload),
+        "",
+      ].join("."),
+    },
+  });
+}
+
+function encodeBase64Url(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8")
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
 }
 
 class CaptureStream extends Writable {

@@ -49,4 +49,49 @@ describe('AccountStore', () => {
     await expect(store.deleteAccount('user@example.com')).rejects.toThrow('deactive');
   });
 
+  test('syncs expired auth JWT subscriptions back to free', async () => {
+    const appHome = await tempHome();
+    const authPath = path.join(appHome, 'auth.json');
+    await writeFile(authPath, makeAuthJsonWithJwt({
+      email: 'user@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_plan_type: 'plus',
+        chatgpt_subscription_active_until: '2026-05-15T08:58:28+00:00',
+      },
+    }), 'utf8');
+    const store = new AccountStore(appHome);
+
+    await store.createAccount('user@example.com', authPath, {
+      email: 'user@example.com',
+      planType: 'plus',
+      subscriptionExpiresAt: '2026-05-15T08:58:28.000Z'
+    });
+
+    const summaries = await store.listSummaries();
+
+    expect(summaries[0]?.meta?.planType).toBe('free');
+    expect(summaries[0]?.meta?.subscriptionExpiresAt).toBeNull();
+    expect((await store.readMeta('user@example.com'))?.planType).toBe('free');
+  });
+
 });
+
+function makeAuthJsonWithJwt(payload: unknown): string {
+  return JSON.stringify({
+    tokens: {
+      id_token: [
+        encodeBase64Url({ alg: 'none', typ: 'JWT' }),
+        encodeBase64Url(payload),
+        '',
+      ].join('.'),
+    },
+  });
+}
+
+function encodeBase64Url(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8')
+    .toString('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '');
+}

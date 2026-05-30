@@ -93,7 +93,6 @@ http://codexaccount.localhost:1355
 bun cli deactive
 bun cli delete
 bun cli refresh
-bun cli subscription
 ```
 
 常用含义：
@@ -101,7 +100,6 @@ bun cli subscription
 - `bun cli deactive`：退出当前激活账号
 - `bun cli delete`：删除保存的账号
 - `bun cli refresh`：刷新账号 token
-- `bun cli subscription`：更新订阅到期时间
 
 ## 迁移账号
 

@@ -52,13 +52,16 @@ function Root({
 
   return (
     <Alert.Root
-      className="w-auto shadow-regular-md px-4 min-w-50"
+      className="w-auto max-w-[calc(100vw-2rem)] min-w-50 px-4 shadow-regular-md"
       size="large"
       status={status}
       variant={variant}
+      wrapperClassName="!flex items-start gap-3"
     >
-      <Alert.Icon as={Icon} size="large" />
-      <span className="min-w-0 leading-5">{message}</span>
+      <Alert.Icon as={Icon} className="mt-0.5 shrink-0" size="large" />
+      <span className="min-w-0 max-w-96 break-words leading-5">
+        {message}
+      </span>
       {/*{dismissable && (
         <button
           className="shrink-0"

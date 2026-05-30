@@ -9,6 +9,9 @@ export type AccountMeta = {
   email: string | null;
   planType: string | null;
   subscriptionExpiresAt: string | null;
+  tokenStatus: "valid" | "invalid";
+  tokenInvalidatedAt: string | null;
+  tokenInvalidReason: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -35,6 +38,9 @@ export type AccountSummary = {
   alias: string;
   isActive: boolean;
   hasAuth: boolean;
+  tokenStatus: "valid" | "invalid" | "missing";
+  tokenInvalidatedAt: string | null;
+  tokenInvalidReason: string | null;
   meta: AccountMeta | null;
   quota: AccountQuota | null;
 };
@@ -51,6 +57,7 @@ export type AutoQuotaState = {
   lastFailureByAlias: Record<string, string>;
   consecutiveFailureCountByAlias: Record<string, number>;
   lastQuotaFetchAliases: string[];
+  invalidTokenAliases: string[];
   handledFiveHourResets: Record<string, string>;
   lastWakeAt: string | null;
   lastMissedCheckCount: number;

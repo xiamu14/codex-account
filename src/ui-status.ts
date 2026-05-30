@@ -9,6 +9,7 @@ export type UiStatus = {
     subscriptionExpiresAt: string | null;
     isActive: boolean;
     hasAuth: boolean;
+    isInvalidToken: boolean;
     quota: AccountQuota | null;
     usagePriority: AccountUsagePriority;
     isRecommendedNext: boolean;

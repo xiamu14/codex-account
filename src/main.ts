@@ -16,7 +16,6 @@ import {
   quotaCommand,
   refreshCommand,
   saveCommand,
-  subscriptionCommand,
 } from "./commands.ts";
 import chalk from "chalk";
 import { resolveCodexBin } from "./codex.ts";
@@ -61,7 +60,6 @@ function usage(): string {
         ["bun cli deactive", "退出当前账号"],
         ["bun cli delete", "删除账号"],
         ["bun cli refresh", "刷新账号 token"],
-        ["bun cli subscription", "更新订阅到期时间"],
       ],
     },
     {
@@ -255,14 +253,6 @@ async function run(argv: string[]): Promise<number> {
       }
       return 0;
 
-    case "subscription": {
-      const context = await buildContext();
-      if (argv[1] !== undefined) {
-        throw new Error("subscription 不需要参数。");
-      }
-      await subscriptionCommand(context);
-      return 0;
-    }
     case "ui": {
       const context = await buildContext();
       await uiCommand(context, parseUiOptions(argv.slice(1)));

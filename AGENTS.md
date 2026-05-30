@@ -34,7 +34,6 @@ bun cli quota --start
 bun cli quota --stop
 bun cli quota --status
 bun cli refresh [alias]
-bun cli subscription
 ```
 
 `install/start/stop/uninstall` 使用 macOS launchd 管理后台服务。

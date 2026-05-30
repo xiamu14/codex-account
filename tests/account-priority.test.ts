@@ -47,6 +47,24 @@ describe("account usage priority", () => {
       describePrimaryLimit(makeQuota("2026-05-11T05:30:00.000Z"), "plus"),
     ).toBe("5h limit");
   });
+
+  test("moves invalid token accounts behind all usable and blocked accounts", () => {
+    const invalid = makeSummary("invalid@example.com", true, 95, "2026-05-11T02:00:00.000Z");
+    invalid.tokenStatus = "invalid";
+    invalid.meta!.tokenStatus = "invalid";
+    const accounts = [
+      invalid,
+      makeSummary("usable@example.com", false, 10, "2026-05-11T05:00:00.000Z"),
+      makeSummary("blocked@example.com", false, 0, "2026-05-11T02:00:00.000Z"),
+    ];
+
+    expect(sortAccountsByUsagePriority(accounts).map((account) => account.alias)).toEqual([
+      "usable@example.com",
+      "blocked@example.com",
+      "invalid@example.com",
+    ]);
+    expect(getRecommendedNextAlias(accounts)).toBe("usable@example.com");
+  });
 });
 
 function makeSummary(
@@ -61,11 +79,17 @@ function makeSummary(
     alias,
     isActive,
     hasAuth: true,
+    tokenStatus: "valid",
+    tokenInvalidatedAt: null,
+    tokenInvalidReason: null,
     meta: {
       alias,
       email: alias,
       planType: "plus",
       subscriptionExpiresAt: null,
+      tokenStatus: "valid",
+      tokenInvalidatedAt: null,
+      tokenInvalidReason: null,
       createdAt: "2026-05-11T00:00:00.000Z",
       updatedAt: "2026-05-11T00:00:00.000Z",
     },

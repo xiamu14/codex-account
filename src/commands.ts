@@ -4,11 +4,12 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import chalk from "chalk";
-import dayjs from "dayjs";
 import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
+import { mergeAccountInfo, readAuthAccountInfo } from "./auth-jwt.ts";
 import {
   AUTO_QUOTA_MAX_INTERVAL_MINUTES,
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
+  migrateInvalidTokensFromAutoQuota,
   readAutoQuotaState,
   writeAutoQuotaState,
 } from "./auto-quota.ts";
@@ -232,13 +233,17 @@ export async function saveCommand(
       throw new Error("当前未登录。请先运行 bun cli login。");
     }
 
-    const account = await readAcpAccount(
-      context.codexBin,
-      context.codexHome,
-      context.cwd,
+    const account = mergeAccountInfo(
+      await readAcpAccount(
+        context.codexBin,
+        context.codexHome,
+        context.cwd,
+      ),
+      await readAuthAccountInfo(liveAuth),
     );
     const savedAccount = findSavedAccount(await store.listSummaries(), account);
     if (savedAccount !== null) {
+      await store.writeMeta(mergeMeta(savedAccount.alias, savedAccount.meta, account));
       context.stdout.write(`当前账号已保存为 ${savedAccount.alias}。\n`);
       return;
     }
@@ -287,16 +292,20 @@ export async function loginCommand(
         throw new Error("登录失败：没有生成 auth.json。");
       }
 
-      const account = await readAcpAccount(
-        context.codexBin,
-        loginHome,
-        context.cwd,
+      const account = mergeAccountInfo(
+        await readAcpAccount(
+          context.codexBin,
+          loginHome,
+          context.cwd,
+        ),
+        await readAuthAccountInfo(loginAuth),
       );
       const savedAccount = findSavedAccount(
         await store.listSummaries(),
         account,
       );
       if (savedAccount !== null) {
+        await store.writeMeta(mergeMeta(savedAccount.alias, savedAccount.meta, account));
         context.stdout.write(
           `登录完成。账号已保存为 ${savedAccount.alias}。\n`,
         );
@@ -437,10 +446,13 @@ export async function activeCommand(
     await removePath(path.join(context.codexHome, "auth.json"));
     await activateAuth(authPath, context.codexHome);
 
-    const account = await readAcpAccount(
-      context.codexBin,
-      context.codexHome,
-      context.cwd,
+    const account = mergeAccountInfo(
+      await readAcpAccount(
+        context.codexBin,
+        context.codexHome,
+        context.cwd,
+      ),
+      await readAuthAccountInfo(authPath),
     );
     const meta = await store.readMeta(target);
     await store.writeMeta(mergeMeta(target, meta, account));
@@ -457,16 +469,39 @@ export async function quotaCommand(
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await store.loadState();
-    const allAliases = sortAccountsByUsagePriority(
-      await store.listSummaries(),
-    ).map((account) => account.alias);
-    const targets =
+    await migrateInvalidTokensFromAutoQuota(context.appHome, store);
+    const summaries = await store.listSummaries();
+    const invalidAliases = new Set(
+      summaries
+        .filter((account) => account.tokenStatus !== "valid")
+        .map((account) => account.alias),
+    );
+    const allAliases = sortAccountsByUsagePriority(summaries).map(
+      (account) => account.alias,
+    );
+    const requestedTargets =
       options.aliases ??
       (options.select === true
         ? await selectAliases(allAliases, "刷新额度")
         : allAliases);
+    const skippedInvalidAliases = requestedTargets.filter((alias) =>
+      invalidAliases.has(alias),
+    );
+    const targets = requestedTargets.filter(
+      (alias) => !invalidAliases.has(alias),
+    );
     if (targets.length === 0) {
-      throw new Error("没有账号可刷新。");
+      if (skippedInvalidAliases.length === 0) {
+        throw new Error("没有账号可刷新。");
+      }
+      context.stderr.write(
+        `已跳过 token 失效的账号：${skippedInvalidAliases.join(", ")}\n`,
+      );
+      const selected = (await store.listSummaries()).filter((summary) =>
+        requestedTargets.includes(summary.alias),
+      );
+      context.stdout.write(`\n${renderList(selected)}\n`);
+      return;
     }
 
     const failures: string[] = [];
@@ -479,11 +514,8 @@ export async function quotaCommand(
         if (result.quota !== null) {
           context.stdout.write(`已刷新 ${alias}\n`);
         } else {
-          if (
-            state.activeAccount === alias &&
-            isTokenInvalidated(result.error)
-          ) {
-            await store.setActive(null);
+          if (isTokenInvalidated(result.error)) {
+            await markInvalidTokenAliases(store, [alias]);
             deactivatedAliases.push(alias);
           }
           warnings.push(formatQuotaWarning(alias, result.error));
@@ -506,9 +538,14 @@ export async function quotaCommand(
         `已退出 token 失效的账号：${deactivatedAliases.join(", ")}\n`,
       );
     }
+    if (skippedInvalidAliases.length > 0) {
+      context.stderr.write(
+        `已跳过 token 失效的账号：${skippedInvalidAliases.join(", ")}\n`,
+      );
+    }
 
-    const summaries = await store.listSummaries();
-    const selected = summaries.filter((summary) =>
+    const updatedSummaries = await store.listSummaries();
+    const selected = updatedSummaries.filter((summary) =>
       targets.includes(summary.alias),
     );
     context.stdout.write(`\n${renderList(selected)}\n`);
@@ -521,7 +558,13 @@ export async function retryFailedQuotaCommand(
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const current = await readAutoQuotaState(context.appHome);
-    const aliases = Object.keys(current.lastFailureByAlias);
+    await migrateInvalidTokensFromAutoQuota(context.appHome, store);
+    const accountByAlias = new Map(
+      (await store.listSummaries()).map((account) => [account.alias, account]),
+    );
+    const aliases = Object.keys(current.lastFailureByAlias).filter(
+      (alias) => accountByAlias.get(alias)?.tokenStatus === "valid",
+    );
     if (aliases.length === 0) {
       context.stdout.write("没有失败记录可重试。\n");
       return;
@@ -531,11 +574,16 @@ export async function retryFailedQuotaCommand(
     const quotaFetches: string[] = [];
     const failures: Record<string, string> = {};
     const recoveredAliases: string[] = [];
+    const invalidTokenAliases: string[] = [];
 
     for (const [index, alias] of aliases.entries()) {
       await waitBeforeQuotaRefresh(index, aliases.length);
       const result = await refreshQuotaQuietly(context, store, alias);
       if (result.quota === null) {
+        if (isTokenInvalidated(result.error)) {
+          invalidTokenAliases.push(alias);
+          continue;
+        }
         failures[alias] = formatAutoQuotaFailure(alias, result.error);
         context.stdout.write(`已重试 ${alias}，额度未刷新。\n`);
         continue;
@@ -558,6 +606,7 @@ export async function retryFailedQuotaCommand(
       ),
       lastQuotaFetchAliases: quotaFetches,
     });
+    await markInvalidTokenAliases(store, invalidTokenAliases);
   });
 }
 
@@ -620,10 +669,12 @@ async function refreshAccountQuota(
 ): Promise<{ quota: AccountQuota | null; error: string | null }> {
   let runHome: string | null = null;
   try {
+    const authPath = await store.authPath(alias);
+    const authAccount = await readAuthAccountInfo(authPath);
     runHome = await prepareAcpHome({
       appHome: context.appHome,
       codexHome: context.codexHome,
-      authPath: await store.authPath(alias),
+      authPath,
     });
     const snapshot = await readAcpSnapshotBestEffort(
       context.codexBin,
@@ -635,7 +686,7 @@ async function refreshAccountQuota(
       store.readQuota(alias),
     ]);
     const account = normalizeAccountPlanFromQuota(
-      snapshot.account,
+      mergeAccountInfo(snapshot.account, authAccount),
       snapshot.quota ?? existingQuota,
       existingMeta?.planType ?? null,
     );
@@ -719,13 +770,19 @@ export async function autoQuotaStartCommand(
     bunBin?: string;
   } = {},
 ): Promise<void> {
-  let startResult: { successes: string[]; failures: Record<string, string> } = {
+  let startResult: {
+    successes: string[];
+    failures: Record<string, string>;
+    invalidTokenAliases: string[];
+  } = {
     successes: [],
     failures: {},
+    invalidTokenAliases: [],
   };
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const state = await readAutoQuotaState(context.appHome);
+    await migrateInvalidTokensFromAutoQuota(context.appHome, store);
     startResult = await refreshAllQuotaForAutoStart(context, store);
     const now = new Date();
     await writeAutoQuotaState(context.appHome, {
@@ -752,6 +809,7 @@ export async function autoQuotaStartCommand(
       ),
       lastQuotaFetchAliases: startResult.successes,
     });
+    await markInvalidTokenAliases(store, startResult.invalidTokenAliases);
   });
 
   if (options.startService !== false) {
@@ -785,21 +843,30 @@ export async function autoQuotaStartCommand(
 async function refreshAllQuotaForAutoStart(
   context: CommandContext,
   store: AccountStore,
-): Promise<{ successes: string[]; failures: Record<string, string> }> {
+): Promise<{
+  successes: string[];
+  failures: Record<string, string>;
+  invalidTokenAliases: string[];
+}> {
   const sortedAliases = sortAccountsByUsagePriority(
     await store.listSummaries(),
   ).map((account) => account.alias);
   const successes: string[] = [];
   const failures: Record<string, string> = {};
+  const invalidTokenAliases: string[] = [];
   for (const alias of sortedAliases) {
     const result = await refreshQuotaQuietly(context, store, alias);
     if (result.quota === null) {
+      if (isTokenInvalidated(result.error)) {
+        invalidTokenAliases.push(alias);
+        continue;
+      }
       failures[alias] = formatAutoQuotaFailure(alias, result.error);
       continue;
     }
     successes.push(alias);
   }
-  return { successes, failures };
+  return { successes, failures, invalidTokenAliases };
 }
 
 export async function autoQuotaStopCommand(
@@ -954,6 +1021,7 @@ export async function autoQuotaTickCommand(
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
     const current = await readAutoQuotaState(context.appHome);
+    await migrateInvalidTokensFromAutoQuota(context.appHome, store);
     if (!current.enabled) {
       return;
     }
@@ -963,6 +1031,7 @@ export async function autoQuotaTickCommand(
     const quotaFetches: string[] = [];
     const failures: Record<string, string> = {};
     const recoveredAliases: string[] = [];
+    const invalidTokenAliases: string[] = [];
     const handledFiveHourResets = { ...current.handledFiveHourResets };
     const sortedAliases = sortAccountsByUsagePriority(
       await store.listSummaries(),
@@ -973,6 +1042,10 @@ export async function autoQuotaTickCommand(
       await waitBeforeQuotaRefresh(index, sortedAliases.length);
       const fetched = await refreshQuotaQuietly(context, store, alias);
       if (fetched.quota === null) {
+        if (isTokenInvalidated(fetched.error)) {
+          invalidTokenAliases.push(alias);
+          continue;
+        }
         failures[alias] = formatAutoQuotaFailure(alias, fetched.error);
         continue;
       }
@@ -1029,6 +1102,10 @@ export async function autoQuotaTickCommand(
         message: pickCallMessage(),
       });
       if (result.error !== null) {
+        if (isTokenInvalidated(result.error)) {
+          invalidTokenAliases.push(alias);
+          continue;
+        }
         failures[alias] = result.error;
         continue;
       }
@@ -1038,6 +1115,10 @@ export async function autoQuotaTickCommand(
       handledFiveHourResets[alias] = resetValue;
       const refreshed = await refreshQuotaQuietly(context, store, alias);
       if (refreshed.quota === null) {
+        if (isTokenInvalidated(refreshed.error)) {
+          invalidTokenAliases.push(alias);
+          continue;
+        }
         failures[alias] = "已发送刷新请求，但读取新额度失败。";
       } else {
         pushUnique(quotaFetches, alias);
@@ -1065,6 +1146,7 @@ export async function autoQuotaTickCommand(
       lastQuotaFetchAliases: quotaFetches,
       handledFiveHourResets,
     });
+    await markInvalidTokenAliases(store, invalidTokenAliases);
   });
 }
 
@@ -1161,81 +1243,23 @@ export async function refreshCommand(
         throw new Error("登录失败：没有生成 auth.json。");
       }
 
-      const account = await readAcpAccount(
-        context.codexBin,
-        refreshHome,
-        context.cwd,
+      const account = mergeAccountInfo(
+        await readAcpAccount(
+          context.codexBin,
+          refreshHome,
+          context.cwd,
+        ),
+        await readAuthAccountInfo(refreshAuth),
       );
       await assertRefreshTarget(target, expectedEmail, account);
       await store.replaceAuth(target, refreshAuth);
       await store.writeMeta(mergeMeta(target, existingMeta, account));
+      await store.markTokenValid(target);
     } finally {
       await cleanupRunHome(refreshHome);
     }
 
     context.stdout.write(`已刷新 ${target} 的 token。\n`);
-  });
-}
-
-export async function subscriptionCommand(
-  context: CommandContext,
-): Promise<void> {
-  await withLock(context.appHome, async () => {
-    const store = new AccountStore(context.appHome);
-    const state = await store.loadState();
-    if (state.accounts.length === 0) {
-      throw new Error("没有账号可更新订阅日期。");
-    }
-    const target = requireAccountTarget(
-      await resolveAccountTarget(state, undefined, "更新订阅日期"),
-      "没有可更新订阅日期的账号。",
-    );
-    const dateText = await inputText(
-      "输入订阅日期",
-      "May 17, 2026",
-      validateSubscriptionDate,
-    );
-    await updateSubscriptionDate(store, target, dateText);
-    context.stdout.write(`已更新 ${target} 的订阅日期：${dateText}。\n`);
-  });
-}
-
-export async function updateSubscriptionDateCommand(
-  context: CommandContext,
-  dateText: string,
-  alias?: string,
-): Promise<void> {
-  await withLock(context.appHome, async () => {
-    const store = new AccountStore(context.appHome);
-    const state = await store.loadState();
-    if (state.accounts.length === 0) {
-      throw new Error("没有账号可更新订阅日期。");
-    }
-    const target = requireAccountTarget(
-      await resolveAccountTarget(state, alias, "更新订阅日期"),
-      "没有可更新订阅日期的账号。",
-    );
-    await updateSubscriptionDate(store, target, dateText);
-    context.stdout.write(`已更新 ${target} 的订阅日期：${dateText}。\n`);
-  });
-}
-
-async function updateSubscriptionDate(
-  store: AccountStore,
-  alias: string,
-  dateText: string,
-): Promise<void> {
-  const subscriptionExpiresAt = parseSubscriptionDate(dateText);
-  await store.requireAccount(alias);
-  const meta = await store.readMeta(alias);
-  const now = new Date().toISOString();
-  await store.writeMeta({
-    alias,
-    email: meta?.email ?? null,
-    planType: meta?.planType ?? null,
-    subscriptionExpiresAt,
-    createdAt: meta?.createdAt ?? now,
-    updatedAt: now,
   });
 }
 
@@ -1292,29 +1316,12 @@ function mergeMeta(
     subscriptionExpiresAt: shouldClearSubscription
       ? null
       : (next.subscriptionExpiresAt ?? existing?.subscriptionExpiresAt ?? null),
+    tokenStatus: existing?.tokenStatus ?? "valid",
+    tokenInvalidatedAt: existing?.tokenInvalidatedAt ?? null,
+    tokenInvalidReason: existing?.tokenInvalidReason ?? null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
-}
-
-function parseSubscriptionDate(value: string): string {
-  const date = dayjs(value.trim());
-  if (!date.isValid()) {
-    throw new Error("订阅日期无效。");
-  }
-  return date.endOf("day").toDate().toISOString();
-}
-
-function validateSubscriptionDate(
-  value: string | undefined,
-): string | undefined {
-  try {
-    if (value === undefined) return "请输入订阅日期。";
-    parseSubscriptionDate(value);
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
 }
 
 function validateAlias(value: string | undefined): string | undefined {
@@ -1635,8 +1642,21 @@ function pad(value: number): string {
 
 function isTokenInvalidated(error: string | null): boolean {
   return Boolean(
-    error?.includes("token_invalidated") || error?.includes("401 Unauthorized"),
+    error?.includes("token_invalidated") ||
+      error?.includes("401 Unauthorized") ||
+      error?.includes("token 已失效") ||
+      error?.includes("invalid token"),
   );
+}
+
+async function markInvalidTokenAliases(
+  store: AccountStore,
+  aliases: string[],
+): Promise<void> {
+  if (aliases.length === 0) return;
+  for (const alias of aliases) {
+    await store.markTokenInvalid(alias, "token 已失效");
+  }
 }
 
 function pickCallMessage(): string {

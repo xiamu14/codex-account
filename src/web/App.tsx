@@ -166,7 +166,12 @@ function Dashboard({
   onRetryQuota: () => Promise<void>;
   status: UiStatus;
 }) {
-  const failures = Object.entries(status.quota.lastFailureByAlias);
+  const failures = Object.entries(status.quota.lastFailureByAlias).filter(
+    ([alias]) =>
+      !status.accounts.some(
+        (account) => account.alias === alias && account.isInvalidToken,
+      ),
+  );
 
   return (
     <Shell>
@@ -250,8 +255,9 @@ function QuotaRefreshCard({
   accounts: UiStatus["accounts"];
   nextQuotaFetchAt: string | null;
 }) {
-  const orderedAccounts = sortAccountsForDisplay(accounts);
-  const refreshedCount = accounts.filter(
+  const validAccounts = accounts.filter((account) => !account.isInvalidToken);
+  const orderedAccounts = sortAccountsForDisplay(validAccounts);
+  const refreshedCount = validAccounts.filter(
     (account) => account.lastQuotaFetchAt !== null,
   ).length;
 
@@ -451,9 +457,10 @@ function SwitchAccountCard({
   );
   const hasUsableInactiveAccount = usableInactiveAccounts.length > 0;
   const recommendedAlias =
-    usableInactiveAccounts.find((account) => account.isRecommendedNext)?.alias ??
-    "";
-  const defaultAlias = recommendedAlias || usableInactiveAccounts[0]?.alias || "";
+    usableInactiveAccounts.find((account) => account.isRecommendedNext)
+      ?.alias ?? "";
+  const defaultAlias =
+    recommendedAlias || usableInactiveAccounts[0]?.alias || "";
   const inactiveAccountKey = inactiveAccounts
     .map((account) => `${account.alias}:${account.usagePriority.status}`)
     .join("|");
@@ -476,9 +483,7 @@ function SwitchAccountCard({
   const selectedAccountIsUsable =
     selectedAccount?.usagePriority.status === "usable";
   const canActivate =
-    selectedAlias.trim().length > 0 &&
-    selectedAccountIsUsable &&
-    !isActivating;
+    selectedAlias.trim().length > 0 && selectedAccountIsUsable && !isActivating;
   const showRecommendation =
     recommendedAlias !== "" && selectedAlias === recommendedAlias;
 
@@ -560,6 +565,10 @@ function sortAccountsForDisplay(
   accounts: UiStatus["accounts"],
 ): UiStatus["accounts"] {
   return [...accounts].sort((left, right) => {
+    const invalidDelta =
+      Number(left.isInvalidToken) - Number(right.isInvalidToken);
+    if (invalidDelta !== 0) return invalidDelta;
+
     const activeDelta = Number(right.isActive) - Number(left.isActive);
     if (activeDelta !== 0) return activeDelta;
 
@@ -570,9 +579,9 @@ function sortAccountsForDisplay(
 function sortAccountsForUsage(
   accounts: UiStatus["accounts"],
 ): UiStatus["accounts"] {
-  return [...accounts].sort((left, right) =>
-    compareAccountsByUsage(accounts, left, right),
-  );
+  return [...accounts]
+    .filter((account) => !account.isInvalidToken)
+    .sort((left, right) => compareAccountsByUsage(accounts, left, right));
 }
 
 function compareAccountsByUsage(
@@ -590,6 +599,7 @@ function compareAccountsByUsage(
 }
 
 function statusSortValue(account: UiStatus["accounts"][number]): number {
+  if (account.isInvalidToken) return 3;
   if (account.usagePriority.status === "usable") return 0;
   if (account.usagePriority.status === "unknown") return 1;
   return 2;
@@ -605,36 +615,48 @@ function AccountRow({
   const fiveHour = account.quota?.fiveHour?.percentLeft ?? null;
   const weeklyQuota = account.quota?.weekly ?? null;
   const primaryQuotaLabel = formatPrimaryQuotaLabel(account);
+  const inactiveVisualClass = account.isInvalidToken
+    ? "opacity-50 saturate-0"
+    : "";
 
   return (
     <>
-      <article className="bg-bg-white-0">
+      <article aria-disabled={account.isInvalidToken} className="bg-bg-white-0">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 w-full">
             <div className="flex items-center gap-2">
-              <div className="truncate text-label-md text-text-strong-950">
-                {formatAccountDisplayName(account.alias)}
+              <div
+                className={`flex min-w-0 items-center gap-2 ${inactiveVisualClass}`}
+              >
+                <div className="truncate text-label-md text-text-strong-950">
+                  {formatAccountDisplayName(account.alias)}
+                </div>
+                {account.isActive ? (
+                  <MetadataBadge color="green" label="active" />
+                ) : null}
+                <PlanBadge planType={account.planType} />
               </div>
-              {account.isActive ? (
-                <MetadataBadge color="green" label="active" />
+              {account.isInvalidToken ? (
+                <MetadataBadge color="red" label="expired token" />
               ) : null}
-              <PlanBadge planType={account.planType} />
               <div className="flex-1"></div>
 
-              {account.subscriptionExpiresAt ? (
-                <div className="text-paragraph-xs text-text-sub-600">
-                  <span>{formatDate(account.subscriptionExpiresAt)}</span>
-                </div>
-              ) : isSubscriptionPlan(account.planType) ? (
-                <div className="text-paragraph-xs text-text-soft-400">
-                  unknown
-                </div>
-              ) : null}
+              <div className={inactiveVisualClass}>
+                {account.subscriptionExpiresAt ? (
+                  <div className="text-paragraph-xs text-text-sub-600">
+                    <span>{formatDate(account.subscriptionExpiresAt)}</span>
+                  </div>
+                ) : isSubscriptionPlan(account.planType) ? (
+                  <div className="text-paragraph-xs text-text-soft-400">
+                    unknown
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
         <div
-          className={`mt-4 grid gap-4 ${weeklyQuota !== null ? "md:grid-cols-2" : ""}`}
+          className={`mt-4 grid gap-4 ${weeklyQuota !== null ? "md:grid-cols-2" : ""} ${inactiveVisualClass}`}
         >
           <QuotaBlock
             label={primaryQuotaLabel}
