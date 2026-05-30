@@ -490,6 +490,9 @@ function SwitchAccountCard({
   return (
     <Card>
       <div className="text-label-lg text-text-strong-950">切换账号</div>
+      {/*<div className="mt-1 text-paragraph-sm text-text-sub-600">
+        账号智能调用
+      </div>*/}
       <Divider.Root className="my-5" />
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
@@ -524,11 +527,11 @@ function SwitchAccountCard({
               ))}
             </Select.Content>
           </Select.Root>
-          {showRecommendation ? (
+          {/*{showRecommendation ? (
             <div className="mt-2 text-paragraph-xs text-text-sub-600">
               下一个账号建议使用
             </div>
-          ) : null}
+          ) : null}*/}
         </div>
         <Button.Root
           aria-busy={isActivating}
