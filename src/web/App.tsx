@@ -125,11 +125,7 @@ export function App() {
           setState({ kind: "ready", status });
           toast.custom(
             (t) => (
-              <ToastAlert.Root
-                message="已开始重新刷新额度。"
-                status="success"
-                t={t}
-              />
+              <ToastAlert.Root message="重新刷新额度" status="success" t={t} />
             ),
             { duration: 4_000 },
           );
@@ -218,7 +214,7 @@ function QuotaStatusCard({ quota }: { quota: UiStatus["quota"] }) {
         <div>
           <div className="text-label-lg text-text-strong-950">定时任务</div>
           <div className="mt-1 text-paragraph-sm text-text-sub-600">
-            自动任务、刷新额度和重置额度
+            自动任务、刷新额度
           </div>
         </div>
         <MetadataBadge
