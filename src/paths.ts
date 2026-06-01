@@ -33,6 +33,14 @@ export function accountQuotaPath(appHome: string, alias: string): string {
   return path.join(accountHome(appHome, alias), 'quota.json');
 }
 
+export function accountRefreshAutoStatePath(appHome: string, alias: string): string {
+  return path.join(accountHome(appHome, alias), 'refresh-auto-state.json');
+}
+
+export function refreshAutoConfigPath(appHome: string): string {
+  return path.join(appHome, 'refresh-auto.json');
+}
+
 export function autoQuotaStatePath(appHome: string): string {
   return path.join(appHome, 'auto-quota.json');
 }

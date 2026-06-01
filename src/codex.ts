@@ -39,9 +39,13 @@ export async function runCodexLogin(
   codexBin: string,
   accountHome: string,
   cwd: string,
+  options: {
+    handleAuthUrl?: (authUrl: string) => Promise<void>;
+    authCompletionGraceMs?: number;
+  } = {},
 ): Promise<void> {
   await mkdir(accountHome, { recursive: true });
-  await runBrowserLoginWithoutOpeningBrowser(codexBin, accountHome, cwd);
+  await runBrowserLoginWithoutOpeningBrowser(codexBin, accountHome, cwd, options);
 }
 
 export async function runCodexCall(
@@ -186,6 +190,10 @@ async function runBrowserLoginWithoutOpeningBrowser(
   codexBin: string,
   codexHome: string,
   cwd: string,
+  options: {
+    handleAuthUrl?: (authUrl: string) => Promise<void>;
+    authCompletionGraceMs?: number;
+  } = {},
 ): Promise<void> {
   const authPath = path.join(codexHome, "auth.json");
   await new Promise<void>((resolve, reject) => {
@@ -211,6 +219,11 @@ async function runBrowserLoginWithoutOpeningBrowser(
     );
     const poll = setInterval(async () => {
       if (await pathExists(authPath)) {
+        if ((options.authCompletionGraceMs ?? 0) > 0) {
+          clearInterval(poll);
+          setTimeout(() => finish(resolve), options.authCompletionGraceMs);
+          return;
+        }
         finish(resolve);
       }
     }, 1000);
@@ -266,7 +279,13 @@ async function runBrowserLoginWithoutOpeningBrowser(
           return;
         }
         process.stdout.write(`登录链接：${authUrl}\n`);
-        process.stdout.write("打开链接完成登录。\n");
+        if (options.handleAuthUrl === undefined) {
+          process.stdout.write("打开链接完成登录。\n");
+          return;
+        }
+        options.handleAuthUrl(authUrl).catch((error) => {
+          finish(() => reject(error));
+        });
       }
     });
     child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));

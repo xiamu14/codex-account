@@ -246,9 +246,22 @@ async function run(argv: string[]): Promise<number> {
       }
       return 0;
     case "refresh":
-      if (argv[2] !== undefined) throw new Error("refresh 最多接收一个账号。");
       {
         const context = await buildContext();
+        if (argv[1] === "--auto") {
+          if (argv[2] !== undefined && argv[2] !== "--dryRun") {
+            throw new Error("refresh --auto 只支持 --dryRun。");
+          }
+          if (argv[3] !== undefined) {
+            throw new Error("refresh --auto 只支持 --dryRun。");
+          }
+          await refreshCommand(context, {
+            auto: true,
+            dryRun: argv[2] === "--dryRun",
+          });
+          return 0;
+        }
+        if (argv[2] !== undefined) throw new Error("refresh 最多接收一个账号。");
         await refreshCommand(context, argv[1]);
       }
       return 0;

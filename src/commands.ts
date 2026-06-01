@@ -49,6 +49,7 @@ import {
   selectAlias,
   selectAliases,
 } from "./prompt.ts";
+import { runRefreshAuto } from "./refresh-auto.ts";
 import {
   isAutoQuotaServiceRunning,
   recoverAutoQuotaServiceIfNeeded,
@@ -1234,7 +1235,7 @@ function randomInt(min: number, max: number): number {
 
 export async function refreshCommand(
   context: CommandContext,
-  alias?: string,
+  options: string | { alias?: string; auto?: boolean; dryRun?: boolean } = {},
 ): Promise<void> {
   await withLock(context.appHome, async () => {
     const store = new AccountStore(context.appHome);
@@ -1242,11 +1243,98 @@ export async function refreshCommand(
     if (state.accounts.length === 0) {
       throw new Error("没有账号可刷新 token。");
     }
+    const resolvedOptions =
+      typeof options === "string" ? { alias: options } : options;
+    if (resolvedOptions.auto === true) {
+      await refreshInvalidTokenAccountAutomatically(context, store, {
+        dryRun: resolvedOptions.dryRun === true,
+      });
+      return;
+    }
     const target = requireAccountTarget(
-      await resolveAccountTarget(state, alias, "刷新 token"),
+      await resolveAccountTarget(state, resolvedOptions.alias, "刷新 token"),
       "请选择账号。",
     );
 
+    await refreshTokenForTarget(context, store, target, null);
+    context.stdout.write(`已刷新 ${target} 的 token。\n`);
+  });
+}
+
+async function refreshInvalidTokenAccountAutomatically(
+  context: CommandContext,
+  store: AccountStore,
+  options: { dryRun: boolean },
+): Promise<void> {
+  await migrateInvalidTokensFromAutoQuota(context.appHome, store);
+  const summaries = await store.listSummaries();
+  const targets = options.dryRun
+    ? summaries
+    : summaries.filter((account) => account.tokenStatus === "invalid");
+  if (targets.length === 0) {
+    context.stdout.write("没有 token 失效的账号需要自动刷新。\n");
+    return;
+  }
+  const target =
+    targets.length === 1
+      ? targets[0]!.alias
+      : await selectAlias(
+          targets.map((account) => account.alias),
+          options.dryRun ? "调试自动刷新" : "自动刷新 token",
+        );
+  const summary = targets.find((account) => account.alias === target);
+  const email = summary?.meta?.email ?? emailFromAlias(target);
+
+  if (options.dryRun) {
+    await runRefreshAuto({
+      appHome: context.appHome,
+      account: { alias: target, email },
+      authUrl: "about:blank",
+      authReady: async () => false,
+      stdout: context.stdout,
+      dryRun: true,
+      preflightOnly: true,
+    });
+    context.stdout.write(`自动刷新 dryRun 通过：${target}。\n`);
+    return;
+  }
+
+  await runRefreshAuto({
+    appHome: context.appHome,
+    account: { alias: target, email },
+    authUrl: "about:blank",
+    authReady: async () => false,
+    stdout: context.stdout,
+    preflightOnly: true,
+  });
+
+  await refreshTokenForTarget(context, store, target, async (authUrl, refreshAuth) => {
+    await runRefreshAuto({
+      appHome: context.appHome,
+      account: { alias: target, email },
+      authUrl,
+      authReady: async () => pathExists(refreshAuth),
+      stdout: context.stdout,
+      dryRun: false,
+      skipProxyCheck: true,
+    });
+  });
+  context.stdout.write(`已刷新 ${target} 的 token。\n`);
+
+  const quota = await refreshAccountQuota(context, store, target);
+  if (quota.quota !== null) {
+    context.stdout.write(`已刷新 ${target} 的额度。\n`);
+    return;
+  }
+  context.stderr.write(`额度刷新失败：${quota.error ?? "未知错误"}\n`);
+}
+
+async function refreshTokenForTarget(
+  context: CommandContext,
+  store: AccountStore,
+  target: string,
+  handleAuthUrl: ((authUrl: string, refreshAuth: string) => Promise<void>) | null,
+): Promise<void> {
     await store.requireAccount(target);
     const existingMeta = await store.readMeta(target);
     const expectedEmail = existingMeta?.email ?? emailFromAlias(target);
@@ -1257,7 +1345,17 @@ export async function refreshCommand(
     );
     try {
       const refreshAuth = path.join(refreshHome, "auth.json");
-      await runCodexLogin(context.codexBin, refreshHome, context.cwd);
+      await runCodexLogin(
+        context.codexBin,
+        refreshHome,
+        context.cwd,
+        handleAuthUrl === null
+          ? {}
+          : {
+              authCompletionGraceMs: 30_000,
+              handleAuthUrl: (authUrl) => handleAuthUrl(authUrl, refreshAuth),
+            },
+      );
       if (!(await pathExists(refreshAuth))) {
         throw new Error("登录失败：没有生成 auth.json。");
       }
@@ -1277,9 +1375,6 @@ export async function refreshCommand(
     } finally {
       await cleanupRunHome(refreshHome);
     }
-
-    context.stdout.write(`已刷新 ${target} 的 token。\n`);
-  });
 }
 
 export async function resolveAccountTarget(

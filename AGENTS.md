@@ -34,6 +34,8 @@ bun cli quota --start
 bun cli quota --stop
 bun cli quota --status
 bun cli refresh [alias]
+bun cli refresh --auto
+bun cli refresh --auto --dryRun
 ```
 
 `install/start/stop/uninstall` 使用 macOS launchd 管理后台服务。
@@ -48,6 +50,14 @@ bun cli refresh [alias]
 ```text
 http://codexaccount.localhost:1355
 ```
+
+`bun cli refresh --auto` 只自动刷新 token 已标记失效的账号。它读取
+`~/.codex-account/refresh-auto.json`，通过 Roxy 浏览器窗口完成登录。前置检查只读取
+Clash controller 的当前代理模式和 RoxyBrowser profile 里的代理国家，不访问 auth.openai.com 或 IP 查询服务。
+不要让它修改 ClashVerge 或 Roxy 代理配置；如果 Clash 当前代理模式不是全局，或 Roxy 代理国家不符合配置，应让用户先手动修正。
+
+`bun cli refresh --auto --dryRun` 用于调试前置条件，会跳过 invalid token 过滤，
+选择任意账号，只检查 Roxy 窗口、Clash 当前代理模式和 Roxy 代理国家，不打开 OpenAI 登录页，也不替换 token。
 
 ## 给 AI 的安装和使用 Prompt
 

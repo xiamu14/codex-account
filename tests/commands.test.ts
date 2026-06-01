@@ -1100,6 +1100,65 @@ describe("refreshCommand", () => {
     const savedAuth = await readFile(await store.authPath("user@example.com"), "utf8");
     expect(savedAuth).toBe('{"token":"old"}');
   });
+
+  test("auto refresh skips when no invalid token accounts exist", async () => {
+    const output = new CaptureStream();
+    const context = await makeContext();
+    context.stdout = output as unknown as NodeJS.WriteStream;
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"old"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await refreshCommand(context, { auto: true });
+
+    expect(output.text).toContain("没有 token 失效的账号需要自动刷新");
+  });
+
+  test("auto refresh only targets invalid token accounts", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeRefreshFakeCodex(context.appHome, {
+      email: "invalid@example.com",
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"old"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("missing@example.com", authPath, {
+      email: "missing@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.createAccount("invalid@example.com", authPath, {
+      email: "invalid@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.markTokenInvalid("invalid@example.com", "token 已失效");
+
+    await expect(refreshCommand(context, { auto: true })).rejects.toThrow(
+      "缺少自动刷新配置",
+    );
+  });
+
+  test("auto refresh dryRun can target valid accounts", async () => {
+    const context = await makeContext();
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"old"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("valid@example.com", authPath, {
+      email: "valid@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await expect(
+      refreshCommand(context, { auto: true, dryRun: true }),
+    ).rejects.toThrow("缺少自动刷新配置");
+  });
 });
 
 describe("findSavedAccount", () => {

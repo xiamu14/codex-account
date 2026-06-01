@@ -93,6 +93,8 @@ http://codexaccount.localhost:1355
 bun cli deactive
 bun cli delete
 bun cli refresh
+bun cli refresh --auto
+bun cli refresh --auto --dryRun
 ```
 
 常用含义：
@@ -100,6 +102,41 @@ bun cli refresh
 - `bun cli deactive`：退出当前激活账号
 - `bun cli delete`：删除保存的账号
 - `bun cli refresh`：刷新账号 token
+- `bun cli refresh --auto`：从 token 失效账号中选择一个，通过 Roxy 浏览器自动刷新 token
+- `bun cli refresh --auto --dryRun`：选择任意账号，只检查 Roxy 窗口和 Clash 代理模式，不打开 OpenAI 登录页
+
+`refresh --auto` 只处理 token 已标记失效的账号。自动化配置固定读取
+`~/.codex-account/refresh-auto.json`，账号配置优先于全局配置。前置检查只读取
+Clash controller 的代理模式和 RoxyBrowser profile 里的代理国家；要求 Clash 当前模式为全局模式，
+且 Roxy 代理国家符合配置。不访问 `auth.openai.com` 或 IP 查询服务：
+
+```json
+{
+  "version": 1,
+  "roxy": {
+    "apiBaseUrl": "http://127.0.0.1:50000",
+    "token": "ROXY_API_TOKEN",
+    "workspaceId": "OEB0107476"
+  },
+  "proxyCheck": {
+    "clashApiSocket": "/tmp/verge/verge-mihomo.sock",
+    "clashApiBaseUrl": "http://127.0.0.1:9097",
+    "global": {
+      "country": "US"
+    },
+    "accounts": {
+      "user@example.com": {
+        "country": "US",
+        "roxyWindowName": "user@example.com"
+      }
+    }
+  }
+}
+```
+
+自动刷新会先检查 Roxy 窗口是否存在，再检查 Clash 是否为全局模式和 Roxy 代理国家；
+不匹配时会停止，不会打开 OpenAI 登录页。遇到 Google 密码、2FA、验证码或风控确认时，
+需要先在 Roxy 窗口里手动处理。
 
 ## 迁移账号
 
