@@ -42,6 +42,7 @@ export async function runCodexLogin(
   options: {
     handleAuthUrl?: (authUrl: string) => Promise<void>;
     authCompletionGraceMs?: number;
+    printFullAuthUrl?: boolean;
   } = {},
 ): Promise<void> {
   await mkdir(accountHome, { recursive: true });
@@ -193,6 +194,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
   options: {
     handleAuthUrl?: (authUrl: string) => Promise<void>;
     authCompletionGraceMs?: number;
+    printFullAuthUrl?: boolean;
   } = {},
 ): Promise<void> {
   const authPath = path.join(codexHome, "auth.json");
@@ -278,7 +280,7 @@ async function runBrowserLoginWithoutOpeningBrowser(
           );
           return;
         }
-        process.stdout.write(`登录链接：${authUrl}\n`);
+        process.stdout.write(`登录链接：${formatLoginUrlForOutput(authUrl, options.printFullAuthUrl ?? options.handleAuthUrl === undefined)}\n`);
         if (options.handleAuthUrl === undefined) {
           process.stdout.write("打开链接完成登录。\n");
           return;
@@ -318,6 +320,16 @@ async function runBrowserLoginWithoutOpeningBrowser(
       })}\n`,
     );
   });
+}
+
+function formatLoginUrlForOutput(authUrl: string, printFull: boolean): string {
+  if (printFull) return authUrl;
+  try {
+    const url = new URL(authUrl);
+    return `${url.origin}${url.pathname}?...`;
+  } catch {
+    return "<已省略>";
+  }
 }
 
 export function browserLoginStartRequest(id: number): JsonRpcRequest {

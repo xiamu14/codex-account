@@ -3,8 +3,10 @@ import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { log as clackLog, outro, spinner } from "@clack/prompts";
 import chalk from "chalk";
 import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
+import { formatAccountDisplayName } from "./account-display.ts";
 import { mergeAccountInfo, readAuthAccountInfo } from "./auth-jwt.ts";
 import {
   AUTO_QUOTA_MAX_INTERVAL_MINUTES,
@@ -1233,6 +1235,15 @@ function randomInt(min: number, max: number): number {
   return min + Math.floor(Math.random() * (max - min + 1));
 }
 
+function formatLogTime(): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
+}
+
 export async function refreshCommand(
   context: CommandContext,
   options: string | { alias?: string; auto?: boolean; dryRun?: boolean } = {},
@@ -1319,13 +1330,17 @@ async function refreshInvalidTokenAccountAutomatically(
       skipProxyCheck: true,
     });
   });
-  context.stdout.write(`已刷新 ${target} 的 token。\n`);
+  clackLog.success(`[${formatLogTime()}] 已刷新 ${formatAccountDisplayName(target)} 的 token。`);
 
+  const quotaSpinner = spinner();
+  quotaSpinner.start(`[${formatLogTime()}] 正在刷新 ${formatAccountDisplayName(target)} 的额度。`);
   const quota = await refreshAccountQuota(context, store, target);
   if (quota.quota !== null) {
-    context.stdout.write(`已刷新 ${target} 的额度。\n`);
+    quotaSpinner.stop(`[${formatLogTime()}] 已刷新 ${formatAccountDisplayName(target)} 的额度。`);
+    outro("You're all set!");
     return;
   }
+  quotaSpinner.stop(`[${formatLogTime()}] 额度刷新失败。`);
   context.stderr.write(`额度刷新失败：${quota.error ?? "未知错误"}\n`);
 }
 

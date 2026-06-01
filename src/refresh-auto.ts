@@ -1,4 +1,5 @@
 import http from "node:http";
+import { log as clackLog } from "@clack/prompts";
 import { readJsonIfExists, writeJsonAtomic } from "./fs.ts";
 import { accountRefreshAutoStatePath, refreshAutoConfigPath } from "./paths.ts";
 
@@ -10,8 +11,14 @@ const DEFAULT_CLASH_API_BASE_URLS = [
 ];
 const DEFAULT_TIMEOUT_MS = 15_000;
 const AUTH_COMPLETION_TIMEOUT_MS = 5 * 60_000;
-const HUMAN_ACTION_MIN_DELAY_MS = 700;
-const HUMAN_ACTION_MAX_DELAY_MS = 2_400;
+const LOGIN_PAGE_TIMEOUT_MS = 60_000;
+const LOGIN_WAIT_LOG_INTERVAL_MS = 5_000;
+const HUMAN_PAGE_SETTLE_MIN_DELAY_MS = 900;
+const HUMAN_PAGE_SETTLE_MAX_DELAY_MS = 2_200;
+const HUMAN_POST_CLICK_MIN_DELAY_MS = 1_800;
+const HUMAN_POST_CLICK_MAX_DELAY_MS = 4_200;
+const HUMAN_SUCCESS_READ_MIN_DELAY_MS = 6_000;
+const HUMAN_SUCCESS_READ_MAX_DELAY_MS = 12_000;
 
 export type RefreshAutoAccount = {
   alias: string;
@@ -131,7 +138,7 @@ export async function runRefreshAuto(options: RefreshAutoOptions): Promise<void>
     const tab = await cdp.createPage();
     try {
       await cdp.enablePage(tab.sessionId);
-      await automateOpenAiLogin(cdp, tab.sessionId, options.authUrl, options.account.email ?? options.account.alias, options.authReady);
+      await automateOpenAiLogin(cdp, tab.sessionId, options.authUrl, options.account.email ?? options.account.alias, options.authReady, options.stdout);
     } finally {
       await cdp.closeTarget(tab.targetId).catch(() => undefined);
     }
@@ -547,115 +554,355 @@ async function automateOpenAiLogin(
   authUrl: string,
   email: string,
   authReady: () => Promise<boolean>,
+  stdout: NodeJS.WriteStream,
 ): Promise<void> {
-  await cdp.navigate(sessionId, authUrl, DEFAULT_TIMEOUT_MS);
-  const deadline = Date.now() + AUTH_COMPLETION_TIMEOUT_MS;
-  let clickedOpenAiGoogle = false;
-  let clickedGoogleAccount = false;
+  const log = createRefreshAutoLogger(stdout);
+  log(`自动登录：打开 Codex 授权链接。`);
+  await cdp.navigate(sessionId, authUrl, LOGIN_PAGE_TIMEOUT_MS);
+  await humanPageSettle(log);
+  const completionDeadline = Date.now() + AUTH_COMPLETION_TIMEOUT_MS;
 
-  while (Date.now() < deadline) {
-    if (await authReady()) return;
-    const state = await cdp.evaluateJson<LoginPageState>(
+  log(`自动登录：等待 ChatGPT 登录入口，最多 60 秒。`);
+  const firstStep = await waitForLoginAction(
+    cdp,
+    sessionId,
+    email,
+    authReady,
+    completionDeadline,
+    "等待 ChatGPT 登录入口超时：1 分钟内没有出现已登录账号或 Continue with Google。",
+    log,
+  );
+  if (firstStep.kind === "authenticated") {
+    log(`自动登录：已检测到登录完成。`);
+    await humanSuccessRead(log);
+    return;
+  }
+  logLoginClick(firstStep, log);
+  await humanReadBeforeClick(firstStep.targetKind, log);
+  await humanClick(cdp, sessionId, firstStep.target, log);
+  log(`自动登录：已发送点击。`);
+  await humanPostClickPause(log);
+
+  if (firstStep.targetKind === "google-provider") {
+    log(`自动登录：等待 Google/ChatGPT 下一步，最多 60 秒。`);
+    const accountStep = await waitForLoginAction(
+      cdp,
       sessionId,
-      `(() => {
-        window.elementClickPoint = window.elementClickPoint || ((element) => {
-          const rect = element.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return null;
-          return {
-            x: rect.left + rect.width * (0.35 + Math.random() * 0.3),
-            y: rect.top + rect.height * (0.35 + Math.random() * 0.3),
-          };
-        });
-        const text = document.body?.innerText || "";
-        const url = location.href;
-        const buttons = [...document.querySelectorAll("button, a, div[role='button']")]
-          .map((el, index) => ({ index, text: (el.innerText || el.textContent || "").trim(), href: el.href || "" }));
-        return { url, text, buttons };
-      })()`,
-      5_000,
+      email,
+      authReady,
+      completionDeadline,
+      "等待登录下一步超时：1 分钟内没有出现已登录账号或 Codex 授权页 Continue。",
+      log,
+      "post-google",
     );
-
-    if (requiresManualGoogleLogin(state.text)) {
-      throw new Error(
-        `自动刷新暂停：Google 账号 ${email} 未处于可自动选择状态。请先在对应 Roxy 窗口里手动登录 Google，然后重新运行 bun cli refresh --auto。`,
-      );
+    if (accountStep.kind === "authenticated") {
+      log(`自动登录：已检测到登录完成。`);
+      await humanSuccessRead(log);
+      return;
     }
+    logLoginClick(accountStep, log);
+    await humanReadBeforeClick(accountStep.targetKind, log);
+    await humanClick(cdp, sessionId, accountStep.target, log);
+    log(`自动登录：已发送点击。`);
+    await humanPostClickPause(log);
 
-    if (!clickedOpenAiGoogle && !isGoogleHost(state.url)) {
-      const target = await cdp.evaluateJson<ClickTarget | null>(
+    if (accountStep.targetKind === "codex-consent") {
+      log(`自动登录：等待 Codex 成功页或 auth.json，最多 60 秒。`);
+      const successStep = await waitForLoginAction(
+        cdp,
         sessionId,
-        `(() => {
-          const candidates = [...document.querySelectorAll("button, a, div[role='button']")];
-          const target = candidates.find((el) => /google/i.test((el.innerText || el.textContent || "") + " " + (el.getAttribute("aria-label") || "")));
-          return target ? elementClickPoint(target) : null;
-        })()`,
-        5_000,
+        email,
+        authReady,
+        completionDeadline,
+        "等待 Codex 登录完成超时：1 分钟内没有出现 Signed in to Codex。",
+        log,
+        "success",
       );
-      if (target !== null) {
-        await humanClick(cdp, sessionId, target);
-        clickedOpenAiGoogle = true;
-        await humanPause();
-        continue;
+      if (successStep.kind === "authenticated") {
+        log(`自动登录：Codex 登录完成。`);
+        await humanSuccessRead(log);
+        return;
       }
+      throw new Error("自动登录失败：没有生成 auth.json。");
     }
-
-    if (isGoogleHost(state.url) && !clickedGoogleAccount) {
-      const target = await cdp.evaluateJson<ClickTarget | null>(
-        sessionId,
-        `((email) => {
-          const candidates = [...document.querySelectorAll("[data-identifier], div[role='link'], div[role='button'], li, button, a")];
-          const target = candidates.find((el) => {
-            const value = [
-              el.getAttribute("data-identifier"),
-              el.getAttribute("aria-label"),
-              el.innerText,
-              el.textContent,
-            ].filter(Boolean).join(" ");
-            return value.toLowerCase().includes(String(email).toLowerCase());
-          });
-          return target ? elementClickPoint(target) : null;
-        })(${JSON.stringify(email)})`,
-        5_000,
-      );
-      if (target !== null) {
-        await humanClick(cdp, sessionId, target);
-        clickedGoogleAccount = true;
-        await humanPause();
-        continue;
-      }
-    }
-
-    const continueTarget = await cdp.evaluateJson<ClickTarget | null>(
-      sessionId,
-      `(() => {
-        const candidates = [...document.querySelectorAll("button, a, div[role='button']")];
-        const target = candidates.find((el) => /^(continue|继续|allow|允许|next|下一步)$/i.test((el.innerText || el.textContent || "").trim()));
-        return target ? elementClickPoint(target) : null;
-      })()`,
-      5_000,
-    );
-    if (continueTarget !== null) {
-      await humanClick(cdp, sessionId, continueTarget);
-      await humanPause();
-      continue;
-    }
-
-    await delay(1_000);
   }
 
-  throw new Error("自动登录超时：没有生成 auth.json。");
+  log(`自动登录：等待 Codex 授权页 Continue，最多 60 秒。`);
+  const consentStep = await waitForLoginAction(
+    cdp,
+    sessionId,
+    email,
+    authReady,
+    completionDeadline,
+    "等待 Codex 授权页超时：1 分钟内没有出现 Continue。",
+    log,
+    "codex-consent",
+  );
+  if (consentStep.kind === "authenticated") {
+    log(`自动登录：已检测到登录完成。`);
+    await humanSuccessRead(log);
+    return;
+  }
+  logLoginClick(consentStep, log);
+  await humanReadBeforeClick(consentStep.targetKind, log);
+  await humanClick(cdp, sessionId, consentStep.target, log);
+  log(`自动登录：已发送点击。`);
+  await humanPostClickPause(log);
+
+  log(`自动登录：等待 Codex 成功页或 auth.json，最多 60 秒。`);
+  const successStep = await waitForLoginAction(
+    cdp,
+    sessionId,
+    email,
+    authReady,
+    completionDeadline,
+    "等待 Codex 登录完成超时：1 分钟内没有出现 Signed in to Codex。",
+    log,
+    "success",
+  );
+  if (successStep.kind === "authenticated") {
+    log(`自动登录：Codex 登录完成。`);
+    await humanSuccessRead(log);
+    return;
+  }
+  throw new Error("自动登录失败：没有生成 auth.json。");
 }
 
 type LoginPageState = {
   url: string;
   text: string;
-  buttons: Array<{ index: number; text: string; href: string }>;
 };
 
 type ClickTarget = {
   x: number;
   y: number;
 };
+
+type LoginAction = {
+  kind: "click";
+  target: ClickTarget & { label: string };
+  targetKind: LoginClickTargetKind;
+} | {
+  kind: "authenticated";
+};
+
+type LoginActionMode = "initial" | "post-google" | "codex-consent" | "success";
+type LoginClickTargetKind = "account" | "google-provider" | "codex-consent";
+
+async function waitForLoginAction(
+  cdp: CdpConnection,
+  sessionId: string,
+  email: string,
+  authReady: () => Promise<boolean>,
+  completionDeadline: number,
+  timeoutMessage: string,
+  log: RefreshAutoLog,
+  mode: LoginActionMode = "initial",
+): Promise<LoginAction> {
+  const deadline = Math.min(Date.now() + LOGIN_PAGE_TIMEOUT_MS, completionDeadline);
+  let lastWaitLogAt = 0;
+  while (Date.now() < deadline) {
+    if (await authReady()) {
+      log(`自动登录：检测到 auth.json 已生成。`);
+      return { kind: "authenticated" };
+    }
+    const state = await readLoginPageState(cdp, sessionId);
+    if (isCodexLoginSuccess(state.text)) {
+      log(`自动登录：检测到 Signed in to Codex 成功页。`);
+      return { kind: "authenticated" };
+    }
+    throwIfManualInterventionRequired(state, email);
+
+    const target = await findLoginClickTarget(cdp, sessionId, email, mode);
+    if (target !== null) {
+      log(`自动登录：找到可点击目标 ${formatClickTarget(target.kind, target.label)}。`);
+      return { kind: "click", target, targetKind: target.kind };
+    }
+    const now = Date.now();
+    if (now - lastWaitLogAt >= LOGIN_WAIT_LOG_INTERVAL_MS) {
+      lastWaitLogAt = now;
+      log(`自动登录：等待中，阶段 ${mode}，页面 ${summarizeLoginPage(state)}。`);
+    }
+    await delay(1_000);
+  }
+  throw new Error(timeoutMessage);
+}
+
+async function readLoginPageState(
+  cdp: CdpConnection,
+  sessionId: string,
+): Promise<LoginPageState> {
+  return await cdp.evaluateJson<LoginPageState>(
+    sessionId,
+    `(() => ({
+      url: location.href,
+      text: document.body?.innerText || "",
+    }))()`,
+    5_000,
+  );
+}
+
+async function findLoginClickTarget(
+  cdp: CdpConnection,
+  sessionId: string,
+  email: string,
+  mode: LoginActionMode,
+): Promise<(ClickTarget & { kind: LoginClickTargetKind; label: string }) | null> {
+  return await cdp.evaluateJson<(ClickTarget & { kind: LoginClickTargetKind; label: string }) | null>(
+    sessionId,
+    `((email, mode) => {
+      const text = document.body?.innerText || "";
+      const normalizedEmail = String(email).toLowerCase().replace(/\\s+/g, "");
+      const visible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      };
+      const point = (element) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return null;
+        return {
+          x: rect.left + rect.width * (0.35 + Math.random() * 0.3),
+          y: rect.top + rect.height * (0.35 + Math.random() * 0.3),
+        };
+      };
+      const label = (element) => [
+        element.getAttribute("data-identifier"),
+        element.getAttribute("aria-label"),
+        element.innerText,
+        element.textContent,
+        element.getAttribute("value"),
+      ].find((value) => typeof value === "string" && value.trim().length > 0)?.trim() || "";
+      const normalizedLabel = (element) => label(element).toLowerCase().replace(/\\s+/g, "");
+      const controls = [...document.querySelectorAll("button, input[type='button'], input[type='submit'], a, div[role='button'], div[role='link'], li[role='option'], [data-identifier]")]
+        .filter((element) => visible(element) && !element.disabled && element.getAttribute("aria-disabled") !== "true");
+      const exactText = (element, value) => label(element).trim().toLowerCase().replace(/\\s+/g, " ") === value;
+
+      if (mode === "success") return null;
+
+      if (mode === "codex-consent" || (mode === "post-google" && /sign in to codex with chatgpt/i.test(text))) {
+        if (mode === "codex-consent" && !/sign in to codex with chatgpt/i.test(text)) return null;
+        const target = controls.find((element) => exactText(element, "continue"));
+        const clickPoint = target ? point(target) : null;
+        return clickPoint && target ? { ...clickPoint, kind: "codex-consent", label: label(target) } : null;
+      }
+
+      if (location.hostname.endsWith("google.com")) {
+        const googleAccount = controls.find((element) => {
+          const value = normalizedLabel(element);
+          return value.includes(normalizedEmail);
+        });
+        const clickPoint = googleAccount ? point(googleAccount) : null;
+        return clickPoint && googleAccount ? { ...clickPoint, kind: "account", label: label(googleAccount) } : null;
+      }
+
+      const chatgptAccount = controls.find((element) => {
+        const value = normalizedLabel(element);
+        if (normalizedEmail.length > 0 && value.includes(normalizedEmail)) return true;
+        return /choose an account to continue/i.test(text) &&
+          /@/.test(label(element)) &&
+          !/log in to another account|create account/i.test(label(element));
+      });
+      if (chatgptAccount) {
+        const clickPoint = point(chatgptAccount);
+        return clickPoint ? { ...clickPoint, kind: "account", label: label(chatgptAccount) } : null;
+      }
+
+      const googleButton = controls.find((element) => /continue with google/i.test(label(element)));
+      const clickPoint = googleButton ? point(googleButton) : null;
+      return clickPoint && googleButton ? { ...clickPoint, kind: "google-provider", label: label(googleButton) } : null;
+    })(${JSON.stringify(email)}, ${JSON.stringify(mode)})`,
+    5_000,
+  );
+}
+
+type RefreshAutoLog = (message: string) => void;
+
+function createRefreshAutoLogger(stdout: NodeJS.WriteStream): RefreshAutoLog {
+  void stdout;
+  return (message: string) => {
+    clackLog.info(`[${formatLogTime()}] ${message}`);
+  };
+}
+
+function formatLogTime(): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
+}
+
+function logLoginClick(
+  action: Extract<LoginAction, { kind: "click" }>,
+  log: RefreshAutoLog,
+): void {
+  log(
+    `自动登录：准备点击 ${formatClickTarget(action.targetKind, action.target.label)}，坐标 (${Math.round(action.target.x)}, ${Math.round(action.target.y)})。`,
+  );
+}
+
+function formatClickTarget(kind: LoginClickTargetKind, label: string): string {
+  const name = kind === "google-provider"
+    ? "Continue with Google"
+    : kind === "codex-consent"
+      ? "Codex Continue"
+      : "账号";
+  const trimmed = label.replace(/\s+/g, " ").trim();
+  return trimmed.length === 0 ? name : `${name} [${trimmed}]`;
+}
+
+function summarizeLoginPage(state: LoginPageState): string {
+  const title = detectLoginPageTitle(state.text);
+  try {
+    const url = new URL(state.url);
+    return `${url.hostname}${url.pathname} / ${title}`;
+  } catch {
+    return title;
+  }
+}
+
+function detectLoginPageTitle(text: string): string {
+  const lower = text.toLowerCase();
+  if (lower.includes("sign in to codex with chatgpt")) return "Codex 授权页";
+  if (lower.includes("choose an account to continue")) return "账号选择页";
+  if (lower.includes("continue with google")) return "ChatGPT 登录页";
+  if (lower.includes("signed in to codex")) return "Codex 成功页";
+  if (lower.includes("your session has ended")) return "ChatGPT 错误页";
+  if (lower.includes("enter your password")) return "Google 密码页";
+  if (lower.includes("2-step verification") || lower.includes("two-step verification")) return "Google 2FA 页";
+  return "未知页面";
+}
+
+function throwIfManualInterventionRequired(state: LoginPageState, email: string): void {
+  const chatGptError = readChatGptAuthError(state.text);
+  if (chatGptError !== null) {
+    throw new Error(chatGptError);
+  }
+  if (requiresManualGoogleLogin(state.text)) {
+    throw new Error(
+      `自动刷新暂停：Google 账号 ${email} 未处于可自动选择状态。请先在对应 Roxy 窗口里手动登录 Google，然后重新运行 bun cli refresh --auto。`,
+    );
+  }
+  if (isMissingChatGptSession(state)) {
+    throw new Error(
+      `自动刷新暂停：ChatGPT 没有已登录账号，也没有 Continue with Google 入口。请先在对应 Roxy 窗口里登录 ChatGPT，然后重新运行 bun cli refresh --auto。`,
+    );
+  }
+}
+
+function readChatGptAuthError(text: string): string | null {
+  const lower = text.toLowerCase();
+  if (!lower.includes("your session has ended") && !lower.includes("error_code:")) {
+    return null;
+  }
+  const code = /error_code:\s*([a-z0-9_]+)/i.exec(text)?.[1] ?? "unknown";
+  if (code === "sign_in_with_chatgpt_codex_consent_missing_workspaces") {
+    return "自动刷新失败：ChatGPT 返回 missing_workspaces。已点击 Codex 授权页 Continue，但这个 ChatGPT 会话没有可用于 Codex 的 workspace。请先在该 Roxy 窗口里打开 ChatGPT，确认账号和 workspace 正常，再重新运行 bun cli refresh --auto。";
+  }
+  return `自动刷新失败：ChatGPT 登录页返回错误 ${code}。请先在对应 Roxy 窗口里手动确认账号状态，再重新运行 bun cli refresh --auto。`;
+}
 
 function requiresManualGoogleLogin(text: string): boolean {
   const lower = text.toLowerCase();
@@ -673,41 +920,84 @@ function requiresManualGoogleLogin(text: string): boolean {
   );
 }
 
-function isGoogleHost(url: string): boolean {
-  try {
-    return new URL(url).hostname.endsWith("google.com");
-  } catch {
-    return false;
-  }
+function isMissingChatGptSession(state: LoginPageState): boolean {
+  const lower = state.text.toLowerCase();
+  return lower.includes("choose an account to continue") &&
+    lower.includes("log in to another account") &&
+    !lower.includes("continue with google") &&
+    !/@/.test(state.text);
+}
+
+function isCodexLoginSuccess(text: string): boolean {
+  const lower = text.toLowerCase();
+  return lower.includes("signed in to codex") && lower.includes("you may now close this page");
 }
 
 async function humanClick(
   cdp: CdpConnection,
   sessionId: string,
   target: ClickTarget,
+  log: RefreshAutoLog,
 ): Promise<void> {
-  const start = {
-    x: target.x + randomInt(-120, 120),
-    y: target.y + randomInt(-80, 80),
-  };
-  const steps = randomInt(5, 9);
-  for (let index = 1; index <= steps; index += 1) {
-    const t = index / steps;
-    const ease = t * t * (3 - 2 * t);
-    await cdp.dispatchMouseEvent(sessionId, "mouseMoved", {
-      x: start.x + (target.x - start.x) * ease + randomInt(-2, 2),
-      y: start.y + (target.y - start.y) * ease + randomInt(-2, 2),
-    });
-    await delay(randomInt(25, 90));
+  try {
+    const start = {
+      x: target.x + randomInt(-120, 120),
+      y: target.y + randomInt(-80, 80),
+    };
+    const steps = randomInt(5, 9);
+    for (let index = 1; index <= steps; index += 1) {
+      const t = index / steps;
+      const ease = t * t * (3 - 2 * t);
+      await cdp.dispatchMouseEvent(sessionId, "mouseMoved", {
+        x: start.x + (target.x - start.x) * ease + randomInt(-2, 2),
+        y: start.y + (target.y - start.y) * ease + randomInt(-2, 2),
+      });
+      await delay(randomInt(25, 90));
+    }
+    await delay(randomInt(120, 450));
+    await cdp.dispatchMouseEvent(sessionId, "mousePressed", target);
+    await delay(randomInt(80, 180));
+    await cdp.dispatchMouseEvent(sessionId, "mouseReleased", target);
+  } catch {
+    log(`自动登录：CDP 鼠标点击失败，改用页面内 click fallback。`);
+    await cdp.clickElementAtPoint(sessionId, target, 10_000);
   }
-  await delay(randomInt(120, 450));
-  await cdp.dispatchMouseEvent(sessionId, "mousePressed", target);
-  await delay(randomInt(80, 180));
-  await cdp.dispatchMouseEvent(sessionId, "mouseReleased", target);
 }
 
-async function humanPause(): Promise<void> {
-  await delay(randomInt(HUMAN_ACTION_MIN_DELAY_MS, HUMAN_ACTION_MAX_DELAY_MS));
+async function humanPageSettle(log: RefreshAutoLog): Promise<void> {
+  const ms = randomInt(HUMAN_PAGE_SETTLE_MIN_DELAY_MS, HUMAN_PAGE_SETTLE_MAX_DELAY_MS);
+  log(`自动登录：页面打开后停留 ${formatDelaySeconds(ms)}，等待内容稳定。`);
+  await delay(ms);
+}
+
+async function humanReadBeforeClick(
+  kind: LoginClickTargetKind,
+  log: RefreshAutoLog,
+): Promise<void> {
+  const [min, max] = kind === "codex-consent"
+    ? [4_000, 8_500]
+    : kind === "google-provider"
+      ? [1_800, 4_200]
+      : [1_200, 3_200];
+  const ms = randomInt(min, max);
+  log(`自动登录：点击前停留 ${formatDelaySeconds(ms)}，模拟阅读确认。`);
+  await delay(ms);
+}
+
+async function humanPostClickPause(log: RefreshAutoLog): Promise<void> {
+  const ms = randomInt(HUMAN_POST_CLICK_MIN_DELAY_MS, HUMAN_POST_CLICK_MAX_DELAY_MS);
+  log(`自动登录：点击后观察 ${formatDelaySeconds(ms)}，等待页面响应。`);
+  await delay(ms);
+}
+
+async function humanSuccessRead(log: RefreshAutoLog): Promise<void> {
+  const ms = randomInt(HUMAN_SUCCESS_READ_MIN_DELAY_MS, HUMAN_SUCCESS_READ_MAX_DELAY_MS);
+  log(`自动登录：成功后停留 ${formatDelaySeconds(ms)}，确认页面状态后再关闭 tab。`);
+  await delay(ms);
+}
+
+function formatDelaySeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)} 秒`;
 }
 
 class CdpConnection {
@@ -779,8 +1069,37 @@ class CdpConnection {
         clickCount: type === "mouseMoved" ? 0 : 1,
       },
       sessionId,
-      5_000,
+      10_000,
     );
+  }
+
+  async clickElementAtPoint(
+    sessionId: string,
+    point: { x: number; y: number },
+    timeoutMs: number,
+  ): Promise<void> {
+    const clicked = await this.evaluateBoolean(
+      sessionId,
+      `((x, y) => {
+        const leaf = document.elementFromPoint(x, y);
+        if (!leaf) return false;
+        const target = leaf.closest("button, a, [role='button'], [role='link'], [data-identifier], li") || leaf;
+        target.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window }));
+        target.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true, view: window }));
+        target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+        target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+        if (typeof target.click === "function") {
+          target.click();
+        } else {
+          target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+        }
+        return true;
+      })(${Math.round(point.x)}, ${Math.round(point.y)})`,
+      timeoutMs,
+    );
+    if (!clicked) {
+      throw new Error("无法通过页面坐标点击目标元素。");
+    }
   }
 
   async evaluateString(sessionId: string, expression: string, timeoutMs: number): Promise<string> {
@@ -913,7 +1232,7 @@ function numberValue(value: unknown): number | null {
 function normalizeRoxyWorkspaceId(value: string | number | null): string | number | null {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
-  const displayMatch = /^OEB0*([0-9]+)$/i.exec(trimmed);
+  const displayMatch = /^[A-Z]+0*([0-9]+)$/i.exec(trimmed);
   if (displayMatch !== null) {
     return Number.parseInt(displayMatch[1]!, 10);
   }
