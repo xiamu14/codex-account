@@ -100,6 +100,16 @@ export function buildServices(projectRoot: string): LaunchdService[] {
   );
   return [
     {
+      label: QUOTA_LABEL,
+      plistPath: path.join(launchAgentsRoot(), `${QUOTA_LABEL}.plist`),
+      programArguments: [
+        process.execPath,
+        entrypoint,
+        "quota",
+        "--service",
+      ],
+    },
+    {
       label: WEB_LABEL,
       plistPath: path.join(launchAgentsRoot(), `${WEB_LABEL}.plist`),
       programArguments: [
@@ -113,16 +123,6 @@ export function buildServices(projectRoot: string): LaunchdService[] {
         entrypoint,
         "ui",
         "--serve",
-      ],
-    },
-    {
-      label: QUOTA_LABEL,
-      plistPath: path.join(launchAgentsRoot(), `${QUOTA_LABEL}.plist`),
-      programArguments: [
-        process.execPath,
-        entrypoint,
-        "quota",
-        "--service",
       ],
     },
   ];

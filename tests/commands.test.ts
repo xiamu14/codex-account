@@ -22,7 +22,12 @@ import {
   saveCommand,
 } from "../src/commands.ts";
 import { readAutoQuotaState, writeAutoQuotaState } from "../src/auto-quota.ts";
-import { autoQuotaStatePath } from "../src/paths.ts";
+import { autoQuotaPidPath, autoQuotaStatePath } from "../src/paths.ts";
+import {
+  registerAutoQuotaServiceProcess,
+  startAutoQuotaService,
+  unregisterAutoQuotaServiceProcess,
+} from "../src/service.ts";
 import { AccountStore } from "../src/store.ts";
 import type { AccountQuota, AccountSummary, CommandContext } from "../src/types.ts";
 
@@ -110,6 +115,40 @@ describe("loginCommand", () => {
     expect(await readFile(await store.authPath("new-account"), "utf8")).toBe('{"token":"fresh"}');
     await expect(readFile(path.join(context.codexHome, "auth.json"), "utf8")).rejects.toThrow();
     expect(output.text).toContain("已保存 new-account");
+  });
+});
+
+describe("auto quota service process tracking", () => {
+  test("registers and unregisters the current service pid", async () => {
+    const context = await makeContext();
+
+    await expect(registerAutoQuotaServiceProcess(context.appHome)).resolves.toBe(
+      true,
+    );
+    expect(
+      (await readFile(autoQuotaPidPath(context.appHome), "utf8")).trim(),
+    ).toBe(String(process.pid));
+
+    await unregisterAutoQuotaServiceProcess(context.appHome);
+    await expect(
+      readFile(autoQuotaPidPath(context.appHome), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  test("does not spawn a duplicate service when the recorded pid is alive", async () => {
+    const context = await makeContext();
+    await writeFile(autoQuotaPidPath(context.appHome), `${process.pid}\n`, "utf8");
+
+    const result = await startAutoQuotaService({
+      bunBin: process.execPath,
+      scriptPath: path.join(context.appHome, "missing.ts"),
+      cwd: context.cwd,
+      appHome: context.appHome,
+      codexHome: context.codexHome,
+      codexBin: context.codexBin,
+    });
+
+    expect(result).toEqual({ started: false, pid: process.pid });
   });
 });
 

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathExists, removePath } from "./fs.ts";
 import {
@@ -22,7 +22,7 @@ export async function startAutoQuotaService(options: {
 }): Promise<{ started: boolean; pid: number | null }> {
   const existingPid = await readAutoQuotaPid(options.appHome);
   if (existingPid !== null && isProcessRunning(existingPid)) {
-    process.kill(existingPid, "SIGTERM");
+    return { started: false, pid: existingPid };
   }
 
   await removePath(autoQuotaPidPath(options.appHome));
@@ -46,6 +46,32 @@ export async function startAutoQuotaService(options: {
     await writeFile(autoQuotaPidPath(options.appHome), `${pid}\n`, "utf8");
   }
   return { started: true, pid };
+}
+
+export async function registerAutoQuotaServiceProcess(
+  appHome: string,
+  pid: number = process.pid,
+): Promise<boolean> {
+  const existingPid = await readAutoQuotaPid(appHome);
+  if (
+    existingPid !== null &&
+    existingPid !== pid &&
+    isProcessRunning(existingPid)
+  ) {
+    return false;
+  }
+  await mkdir(appHome, { recursive: true });
+  await writeFile(autoQuotaPidPath(appHome), `${pid}\n`, "utf8");
+  return true;
+}
+
+export async function unregisterAutoQuotaServiceProcess(
+  appHome: string,
+  pid: number = process.pid,
+): Promise<void> {
+  const existingPid = await readAutoQuotaPid(appHome);
+  if (existingPid !== pid) return;
+  await rm(autoQuotaPidPath(appHome), { force: true });
 }
 
 export async function stopAutoQuotaService(appHome: string): Promise<boolean> {

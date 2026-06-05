@@ -55,8 +55,10 @@ import { runRefreshAuto } from "./refresh-auto.ts";
 import {
   isAutoQuotaServiceRunning,
   recoverAutoQuotaServiceIfNeeded,
+  registerAutoQuotaServiceProcess,
   startAutoQuotaService,
   stopAutoQuotaService,
+  unregisterAutoQuotaServiceProcess,
 } from "./service.ts";
 import { AccountStore, assertAlias } from "./store.ts";
 import type {
@@ -928,41 +930,51 @@ export async function autoQuotaStatusCommand(
 export async function autoQuotaServiceCommand(
   context: CommandContext,
 ): Promise<void> {
+  if (!(await registerAutoQuotaServiceProcess(context.appHome))) {
+    context.stderr.write("已有 quota 后台服务正在运行。\n");
+    return;
+  }
+
   const stop = (): never => {
+    void unregisterAutoQuotaServiceProcess(context.appHome);
     process.exit(0);
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
-  while (true) {
-    const state = await readAutoQuotaState(context.appHome);
-    if (!state.enabled) {
-      await sleep(AUTO_QUOTA_SERVICE_MIN_DELAY_MS);
-      continue;
-    }
+  try {
+    while (true) {
+      const state = await readAutoQuotaState(context.appHome);
+      if (!state.enabled) {
+        await sleep(AUTO_QUOTA_SERVICE_MIN_DELAY_MS);
+        continue;
+      }
 
-    const nowBeforeTick = new Date();
-    const wakeStatus = resolveMissedCheckStatus(state, nowBeforeTick);
-    if (wakeStatus !== null) {
+      const nowBeforeTick = new Date();
+      const wakeStatus = resolveMissedCheckStatus(state, nowBeforeTick);
+      if (wakeStatus !== null) {
+        await writeAutoQuotaState(context.appHome, {
+          ...state,
+          lastWakeAt: nowBeforeTick.toISOString(),
+          lastMissedCheckCount: wakeStatus.missedCheckCount,
+        });
+      }
+
+      await autoQuotaTickCommand(context);
+      const now = new Date();
+      const delay = randomInt(
+        AUTO_QUOTA_SERVICE_MIN_DELAY_MS,
+        AUTO_QUOTA_SERVICE_MAX_DELAY_MS,
+      );
+      const nextCheckAt = await resolveNextAutoQuotaCheckAt(context, now, delay);
       await writeAutoQuotaState(context.appHome, {
-        ...state,
-        lastWakeAt: nowBeforeTick.toISOString(),
-        lastMissedCheckCount: wakeStatus.missedCheckCount,
+        ...(await readAutoQuotaState(context.appHome)),
+        nextCheckAt: nextCheckAt.toISOString(),
       });
+      await sleep(Math.max(0, nextCheckAt.getTime() - Date.now()));
     }
-
-    await autoQuotaTickCommand(context);
-    const now = new Date();
-    const delay = randomInt(
-      AUTO_QUOTA_SERVICE_MIN_DELAY_MS,
-      AUTO_QUOTA_SERVICE_MAX_DELAY_MS,
-    );
-    const nextCheckAt = await resolveNextAutoQuotaCheckAt(context, now, delay);
-    await writeAutoQuotaState(context.appHome, {
-      ...(await readAutoQuotaState(context.appHome)),
-      nextCheckAt: nextCheckAt.toISOString(),
-    });
-    await sleep(Math.max(0, nextCheckAt.getTime() - Date.now()));
+  } finally {
+    await unregisterAutoQuotaServiceProcess(context.appHome);
   }
 }
 
@@ -1061,6 +1073,7 @@ export async function autoQuotaTickCommand(
           invalidTokenAliases.push(alias);
           continue;
         }
+        logAutoQuotaFailure(context, alias, "tick-quota", fetched.error);
         failures[alias] = formatAutoQuotaFailure(alias, fetched.error);
         continue;
       }
@@ -1141,6 +1154,12 @@ export async function autoQuotaTickCommand(
           invalidTokenAliases.push(alias);
           continue;
         }
+        logAutoQuotaFailure(
+          context,
+          alias,
+          "tick-post-call-quota",
+          refreshed.error,
+        );
         failures[alias] = "已发送刷新请求，但读取新额度失败。";
       } else {
         pushUnique(quotaFetches, alias);
@@ -1803,6 +1822,24 @@ function logInvalidTokenFailure(
     `${JSON.stringify({
       level: "warn",
       event: "token_invalidated",
+      alias,
+      stage,
+      error,
+      at: new Date().toISOString(),
+    })}\n`,
+  );
+}
+
+function logAutoQuotaFailure(
+  context: CommandContext,
+  alias: string,
+  stage: string,
+  error: string | null,
+): void {
+  context.stderr.write(
+    `${JSON.stringify({
+      level: "warn",
+      event: "quota_refresh_failed",
       alias,
       stage,
       error,
