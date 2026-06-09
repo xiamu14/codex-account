@@ -642,7 +642,13 @@ function AccountRow({
 
               <div className={inactiveVisualClass}>
                 {account.subscriptionExpiresAt ? (
-                  <div className="text-paragraph-xs text-text-sub-600">
+                  <div
+                    className={`text-paragraph-xs ${
+                      hasStaleSubscriptionDate(account)
+                        ? "text-warning-base"
+                        : "text-text-sub-600"
+                    }`}
+                  >
                     <span>{formatDate(account.subscriptionExpiresAt)}</span>
                   </div>
                 ) : isSubscriptionPlan(account.planType) ? (
@@ -837,6 +843,7 @@ function QuotaToasts({
   quota: UiStatus["quota"];
 }) {
   const activeQuotaWarning = getActiveQuotaWarning(accounts);
+  const staleSubscriptionWarnings = getStaleSubscriptionWarnings(accounts);
 
   useEffect(() => {
     if (quota.lastWakeAt !== null && quota.lastMissedCheckCount > 0) {
@@ -873,11 +880,13 @@ function QuotaToasts({
 
   useEffect(() => {
     notifyActiveQuotaWarning(activeQuotaWarning);
-  }, [activeQuotaWarning]);
+    notifyWarnings(staleSubscriptionWarnings);
+  }, [activeQuotaWarning, staleSubscriptionWarnings]);
 
   useEffect(() => {
     const onFocus = () => {
       notifyActiveQuotaWarning(activeQuotaWarning);
+      notifyWarnings(staleSubscriptionWarnings);
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -885,7 +894,7 @@ function QuotaToasts({
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [activeQuotaWarning]);
+  }, [activeQuotaWarning, staleSubscriptionWarnings]);
 
   return null;
 }
@@ -998,6 +1007,33 @@ function notifyActiveQuotaWarning(
   warning: { key: string; message: string } | null,
 ): void {
   if (warning === null) return;
+  notifyWarning(warning);
+}
+
+function getStaleSubscriptionWarnings(
+  accounts: UiStatus["accounts"],
+): Array<{ key: string; message: string }> {
+  return accounts
+    .filter(hasStaleSubscriptionDate)
+    .map((account) => ({
+      key: [
+        "cxa-stale-subscription-toast",
+        account.alias,
+        account.subscriptionExpiresAt,
+      ].join(":"),
+      message: `${formatAccountDisplayName(account.alias)} 订阅日期错误，请更新 token`,
+    }));
+}
+
+function notifyWarnings(
+  warnings: Array<{ key: string; message: string }>,
+): void {
+  for (const warning of warnings) {
+    notifyWarning(warning);
+  }
+}
+
+function notifyWarning(warning: { key: string; message: string }): void {
   if (shownToastKeys.has(warning.key)) return;
   if (window.localStorage.getItem(warning.key) === "seen") return;
   shownToastKeys.add(warning.key);
@@ -1006,6 +1042,22 @@ function notifyActiveQuotaWarning(
     (t) => <ToastAlert.Root message={warning.message} status="warning" t={t} />,
     { duration: 6_000 },
   );
+}
+
+function hasStaleSubscriptionDate(
+  account: Pick<
+    UiStatus["accounts"][number],
+    "planType" | "subscriptionExpiresAt"
+  >,
+): boolean {
+  if (
+    !isSubscriptionPlan(account.planType) ||
+    account.subscriptionExpiresAt === null
+  ) {
+    return false;
+  }
+  const expiresAt = new Date(account.subscriptionExpiresAt);
+  return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now();
 }
 
 function formatDateTime(value: string | null): string {

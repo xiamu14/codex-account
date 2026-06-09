@@ -227,13 +227,26 @@ export class AccountStore {
       return existing;
     }
 
+    const expiredPaidClaim =
+      isSubscriptionPlan(authAccount.planType) &&
+      isExpiredDate(authAccount.subscriptionExpiresAt);
+    const quota = expiredPaidClaim ? await this.readQuota(alias) : null;
+    const trustExpiredPaidClaim =
+      expiredPaidClaim &&
+      (isSubscriptionPlan(existing?.planType ?? null) ||
+        typeof quota?.weekly?.percentLeft === "number");
     const now = new Date().toISOString();
     const next: AccountMeta = {
       alias,
       email: existing?.email ?? authAccount.email,
-      planType: authAccount.planType ?? existing?.planType ?? null,
+      planType:
+        expiredPaidClaim && !trustExpiredPaidClaim
+          ? (existing?.planType ?? null)
+          : (authAccount.planType ?? existing?.planType ?? null),
       subscriptionExpiresAt:
-        authAccount.planType === "free"
+        expiredPaidClaim && !trustExpiredPaidClaim
+          ? (existing?.subscriptionExpiresAt ?? null)
+          : authAccount.planType === "free"
           ? null
           : (authAccount.subscriptionExpiresAt ??
             existing?.subscriptionExpiresAt ??
@@ -283,4 +296,17 @@ function normalizeAccountMeta(meta: AccountMeta): AccountMeta {
     tokenInvalidatedAt: meta.tokenInvalidatedAt ?? null,
     tokenInvalidReason: meta.tokenInvalidReason ?? null
   };
+}
+
+function isSubscriptionPlan(planType: string | null): boolean {
+  if (planType === null) return false;
+  return ["plus", "pro", "team", "enterprise", "business"].includes(
+    planType.toLowerCase()
+  );
+}
+
+function isExpiredDate(value: string | null): boolean {
+  if (value === null) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() <= Date.now();
 }

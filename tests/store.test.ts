@@ -49,7 +49,7 @@ describe('AccountStore', () => {
     await expect(store.deleteAccount('user@example.com')).rejects.toThrow('deactive');
   });
 
-  test('syncs expired auth JWT subscriptions back to free', async () => {
+  test('does not downgrade an account from an expired auth JWT claim', async () => {
     const appHome = await tempHome();
     const authPath = path.join(appHome, 'auth.json');
     await writeFile(authPath, makeAuthJsonWithJwt({
@@ -69,9 +69,33 @@ describe('AccountStore', () => {
 
     const summaries = await store.listSummaries();
 
+    expect(summaries[0]?.meta?.planType).toBe('plus');
+    expect(summaries[0]?.meta?.subscriptionExpiresAt).toBe('2026-05-15T08:58:28.000Z');
+    expect((await store.readMeta('user@example.com'))?.planType).toBe('plus');
+  });
+
+  test('does not promote a free account from an expired auth JWT claim without weekly quota', async () => {
+    const appHome = await tempHome();
+    const authPath = path.join(appHome, 'auth.json');
+    await writeFile(authPath, makeAuthJsonWithJwt({
+      email: 'user@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_plan_type: 'plus',
+        chatgpt_subscription_active_until: '2026-05-15T08:58:28+00:00',
+      },
+    }), 'utf8');
+    const store = new AccountStore(appHome);
+
+    await store.createAccount('user@example.com', authPath, {
+      email: 'user@example.com',
+      planType: 'free',
+      subscriptionExpiresAt: null
+    });
+
+    const summaries = await store.listSummaries();
+
     expect(summaries[0]?.meta?.planType).toBe('free');
     expect(summaries[0]?.meta?.subscriptionExpiresAt).toBeNull();
-    expect((await store.readMeta('user@example.com'))?.planType).toBe('free');
   });
 
 });

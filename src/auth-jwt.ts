@@ -42,13 +42,6 @@ export function parseAuthAccountInfo(value: unknown): AcpAccountInfo | null {
       "plan_type",
       "subscriptionPlan",
     ]) ?? pickString(payload, ["planType", "plan_type", "plan"]);
-  if (isExpiredSubscription(subscriptionExpiresAt)) {
-    return {
-      email: pickString(payload, ["email"]),
-      planType: "free",
-      subscriptionExpiresAt: null,
-    };
-  }
   return {
     email: pickString(payload, ["email"]),
     planType,
@@ -123,10 +116,4 @@ function pickDate(
     }
   }
   return null;
-}
-
-function isExpiredSubscription(value: string | null): boolean {
-  if (value === null) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime()) && date.getTime() <= Date.now();
 }
