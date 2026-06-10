@@ -28,7 +28,7 @@ describe("auth JWT account info", () => {
     expect(parseAuthAccountInfo({ token: "legacy" })).toBeNull();
   });
 
-  test("treats expired subscriptions as free", () => {
+  test("keeps expired subscription claims for stale-date warnings", () => {
     const account = parseAuthAccountInfo({
       tokens: {
         id_token: makeJwt({
@@ -43,8 +43,8 @@ describe("auth JWT account info", () => {
 
     expect(account).toEqual({
       email: "user@example.com",
-      planType: "free",
-      subscriptionExpiresAt: null,
+      planType: "plus",
+      subscriptionExpiresAt: "2026-05-15T08:58:28.000Z",
     });
   });
 });

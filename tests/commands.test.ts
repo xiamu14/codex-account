@@ -320,6 +320,35 @@ describe("quotaCommand", () => {
     expect(meta?.subscriptionExpiresAt).toBe("2026-06-15T11:52:11.000Z");
   });
 
+  test("keeps the current paid plan when the stored JWT subscription claim expired", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeFakeCodex(context.appHome, {
+      planType: "plus",
+      weeklyPercentLeft: 20,
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, makeAuthJsonWithJwt({
+      email: "jwt@example.com",
+      "https://api.openai.com/auth": {
+        chatgpt_plan_type: "plus",
+        chatgpt_subscription_active_until: "2026-05-15T08:58:28+00:00",
+      },
+    }), "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "old@example.com",
+      planType: "free",
+      subscriptionExpiresAt: null,
+    });
+
+    await quotaCommand(context);
+
+    const meta = await store.readMeta("user@example.com");
+    expect(meta?.email).toBe("fresh@example.com");
+    expect(meta?.planType).toBe("plus");
+    expect(meta?.subscriptionExpiresAt).toBe("2026-05-15T08:58:28.000Z");
+  });
+
   test("keeps updating account metadata when quota refresh fails", async () => {
     const output = new CaptureStream();
     const errorOutput = new CaptureStream();
