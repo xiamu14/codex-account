@@ -27,6 +27,7 @@ const UI_EVENT_HEARTBEAT_DATA = "ok";
 const UI_LOCK_WAIT_MS = 30_000;
 const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
 const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
+const AUTO_QUOTA_CHECK_GRACE_MS = 2 * 60_000;
 let quotaRetryJob: Promise<void> | null = null;
 
 export async function uiCommand(
@@ -318,7 +319,7 @@ function isNextCheckOverdue(state: AutoQuotaState, now: Date): boolean {
   if (!state.enabled || state.nextCheckAt === null) return false;
   const nextCheckAt = new Date(state.nextCheckAt);
   if (Number.isNaN(nextCheckAt.getTime())) return false;
-  return nextCheckAt.getTime() <= now.getTime();
+  return nextCheckAt.getTime() + AUTO_QUOTA_CHECK_GRACE_MS <= now.getTime();
 }
 
 function resolveCurrentMissedCheckCount(
@@ -371,7 +372,9 @@ function resolveNextCheckAt(state: AutoQuotaState): string | null {
   if (state.nextCheckAt !== null) {
     const nextCheckAt = new Date(state.nextCheckAt);
     if (Number.isNaN(nextCheckAt.getTime())) return null;
-    if (nextCheckAt.getTime() <= Date.now()) return "后台服务异常";
+    const overdueMs = Date.now() - nextCheckAt.getTime();
+    if (overdueMs > AUTO_QUOTA_CHECK_GRACE_MS) return "后台服务异常";
+    if (overdueMs >= 0) return "检查中";
     return state.nextCheckAt;
   }
   if (!state.enabled || state.lastTickAt === null) return null;
