@@ -14,7 +14,7 @@
 4. 运行 bun cli start 启动 Web UI 与定时任务。
 5. 启动完成后，只需要告诉我：
    Web UI:
-     http://codexaccount.localhost:1355
+     http://codexaccount.local:1355
 
    CLI:
      bun cli --help
@@ -37,7 +37,7 @@ bun cli start
 启动后访问：
 
 ```text
-http://codexaccount.localhost:1355
+http://codexaccount.local:1355
 ```
 
 ## 使用方式
@@ -84,7 +84,7 @@ bun cli login
 打开 Web UI 后，可以直接查看账号、额度、失败记录，也可以切换激活账号：
 
 ```text
-http://codexaccount.localhost:1355
+http://codexaccount.local:1355
 ```
 
 也可以继续使用命令行：

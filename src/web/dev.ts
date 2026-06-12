@@ -15,6 +15,7 @@ function run(label: string, command: string, args: string[]): ChildProcess {
     env: {
       ...process.env,
       PORTLESS_HTTPS: "0",
+      PORTLESS_LAN: "1",
       PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
     },
     stdio: "inherit",
@@ -60,7 +61,7 @@ const portlessEntrypoint = path.join(
   "dist",
   "cli.js",
 );
-const publicUrl = `http://${PORTLESS_NAME}.localhost:${PORTLESS_PROXY_PORT}`;
+const publicUrl = `http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`;
 
 run("Hono UI 服务", process.execPath, ["run", "src/main.ts", "ui", "--serve"]);
 run("Tailwind", process.execPath, [

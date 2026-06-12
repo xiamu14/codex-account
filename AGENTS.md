@@ -48,7 +48,7 @@ bun cli refresh --auto --dryRun
 启动后访问：
 
 ```text
-http://codexaccount.localhost:1355
+http://codexaccount.local:1355
 ```
 
 `bun cli refresh --auto` 只自动刷新 token 已标记失效的账号。它读取
@@ -73,7 +73,7 @@ Clash controller 的当前代理模式和 RoxyBrowser profile 里的代理国家
 4. 运行 bun cli start 启动后台服务。
 5. 启动完成后只需要告诉我：
    Web UI:
-     http://codexaccount.localhost:1355
+     http://codexaccount.local:1355
 
    CLI:
      bun cli list

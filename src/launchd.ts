@@ -74,7 +74,7 @@ export async function stopLaunchdServices(
 export function renderServiceStartMessage(cliUsage: string): string {
   return [
     "Web UI:",
-    `  http://${PORTLESS_NAME}.localhost:${PORTLESS_PROXY_PORT}`,
+    `  http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`,
     "",
     "CLI:",
     cliUsage,
@@ -141,6 +141,7 @@ function renderPlist(options: {
     CXA_HOME: options.context.appHome,
     PATH: renderLaunchdPath(options.context),
     PORTLESS_HTTPS: "0",
+    PORTLESS_LAN: "1",
     PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
   };
 

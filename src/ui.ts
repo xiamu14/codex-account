@@ -162,7 +162,7 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
     "dist",
     "cli.js",
   );
-  const publicUrl = `http://${PORTLESS_NAME}.localhost:${PORTLESS_PROXY_PORT}`;
+  const publicUrl = `http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`;
   const child = spawn(
     process.execPath,
     [
@@ -185,6 +185,7 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
         CODEX_HOME: context.codexHome,
         CXA_CODEX_BIN: context.codexBin,
         PORTLESS_HTTPS: "0",
+        PORTLESS_LAN: "1",
         PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
       },
       stdio: "inherit",
