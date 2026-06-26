@@ -451,12 +451,15 @@ function SwitchAccountCard({
   const usableInactiveAccounts = inactiveAccounts.filter(
     (account) => account.usagePriority.status === "usable",
   );
-  const hasUsableInactiveAccount = usableInactiveAccounts.length > 0;
+  const switchableInactiveAccounts = inactiveAccounts.filter(
+    (account) => account.hasAuth && !account.isInvalidToken,
+  );
+  const hasSwitchableInactiveAccount = switchableInactiveAccounts.length > 0;
   const recommendedAlias =
     usableInactiveAccounts.find((account) => account.isRecommendedNext)
       ?.alias ?? "";
   const defaultAlias =
-    recommendedAlias || usableInactiveAccounts[0]?.alias || "";
+    recommendedAlias || switchableInactiveAccounts[0]?.alias || "";
   const inactiveAccountKey = inactiveAccounts
     .map((account) => `${account.alias}:${account.usagePriority.status}`)
     .join("|");
@@ -467,7 +470,7 @@ function SwitchAccountCard({
       const currentAccount = inactiveAccounts.find(
         (account) => account.alias === currentAlias,
       );
-      if (currentAccount?.usagePriority.status === "usable") {
+      if (currentAccount?.hasAuth && !currentAccount.isInvalidToken) {
         return currentAlias;
       }
       return defaultAlias;
@@ -476,10 +479,10 @@ function SwitchAccountCard({
 
   const selectedAccount =
     inactiveAccounts.find((account) => account.alias === selectedAlias) ?? null;
-  const selectedAccountIsUsable =
-    selectedAccount?.usagePriority.status === "usable";
+  const selectedAccountIsSwitchable =
+    selectedAccount?.hasAuth && !selectedAccount.isInvalidToken;
   const canActivate =
-    selectedAlias.trim().length > 0 && selectedAccountIsUsable && !isActivating;
+    selectedAlias.trim().length > 0 && selectedAccountIsSwitchable && !isActivating;
   const showRecommendation =
     recommendedAlias !== "" && selectedAlias === recommendedAlias;
 
@@ -493,7 +496,7 @@ function SwitchAccountCard({
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <Select.Root
-            disabled={!hasUsableInactiveAccount || isActivating}
+            disabled={!hasSwitchableInactiveAccount || isActivating}
             onValueChange={setSelectedAlias}
             value={selectedAlias}
           >
@@ -514,7 +517,7 @@ function SwitchAccountCard({
             <Select.Content>
               {inactiveAccounts.map((account) => (
                 <Select.Item
-                  disabled={account.usagePriority.status !== "usable"}
+                  disabled={!account.hasAuth || account.isInvalidToken}
                   key={account.alias}
                   value={account.alias}
                 >
