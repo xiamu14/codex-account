@@ -14,8 +14,11 @@ import {
   getRecommendedNextAlias,
 } from "./account-priority.ts";
 import { activeCommand, retryFailedQuotaCommand } from "./commands.ts";
+import { readJsonIfExists } from "./fs.ts";
+import { isNumber, isRecord, isString } from "./guards.ts";
+import { accountAuthPath } from "./paths.ts";
 import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
-import { AccountStore } from "./store.ts";
+import { AccountStore, assertAlias } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
 import type { UiStatus } from "./ui-status.ts";
 
@@ -46,6 +49,20 @@ export async function uiCommand(
 
   app.get("/", async (c) => c.html(await readIndexHtml(indexPath)));
   app.get("/api/status", async (c) => c.json(await readStatus(context)));
+  app.get("/api/reset-credits", async (c) => {
+    try {
+      const alias = c.req.query("alias");
+      if (typeof alias !== "string" || alias.trim().length === 0) {
+        return c.text("请选择账号。", 400);
+      }
+      return c.json(await readResetCredits(context, alias));
+    } catch (error) {
+      return c.text(
+        error instanceof Error ? error.message : String(error),
+        500,
+      );
+    }
+  });
   app.post("/api/accounts/active", async (c) => {
     try {
       const body = (await c.req.json()) as { alias?: unknown };
@@ -147,6 +164,59 @@ export async function uiCommand(
     `Web UI 内部服务已启动：http://127.0.0.1:${UI_APP_PORT}\n`,
   );
   await new Promise(() => undefined);
+}
+
+type ResetCreditsSummary = {
+  available_count: number;
+  credits: Array<{
+    status: string;
+    title: string;
+    granted_at: string;
+    expires_at: string;
+  }>;
+};
+
+async function readResetCredits(
+  context: CommandContext,
+  alias: string,
+): Promise<ResetCreditsSummary> {
+  assertAlias(alias);
+  const auth = await readJsonIfExists(accountAuthPath(context.appHome, alias));
+  const accessToken = isRecord(auth) && isRecord(auth.tokens) && isString(auth.tokens.access_token)
+    ? auth.tokens.access_token
+    : null;
+  if (accessToken === null) {
+    throw new Error("没有找到该账号的 access_token。");
+  }
+
+  const response = await fetch("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`读取 reset credits 失败：${response.status}`);
+  }
+  return parseResetCredits(await response.json());
+}
+
+function parseResetCredits(value: unknown): ResetCreditsSummary {
+  if (!isRecord(value)) return { available_count: 0, credits: [] };
+  const credits = Array.isArray(value.credits) ? value.credits : [];
+  return {
+    available_count: isNumber(value.available_count) ? value.available_count : 0,
+    credits: credits.filter(isRecord).map((credit) => ({
+      status: pickString(credit.status),
+      title: pickString(credit.title),
+      granted_at: pickString(credit.granted_at),
+      expires_at: pickString(credit.expires_at),
+    })),
+  };
+}
+
+function pickString(value: unknown): string {
+  return isString(value) ? value : "";
 }
 
 function isLockBusyError(error: unknown): boolean {

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Popover } from "@heroui/react/popover";
+import { Table } from "@heroui/react/table";
 import { RiCheckboxCircleFill } from "@remixicon/react";
 import {
   formatAccountDisplayName,
@@ -20,6 +22,22 @@ type MetadataBadgeColor = "blue" | "gray" | "green" | "purple" | "red";
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; status: UiStatus }
+  | { kind: "error"; message: string };
+
+type ResetCredits = {
+  available_count: number;
+  credits: Array<{
+    status: string;
+    title: string;
+    granted_at: string;
+    expires_at: string;
+  }>;
+};
+
+type ResetCreditsState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; credits: ResetCredits }
   | { kind: "error"; message: string };
 
 const hiddenScrollListClass =
@@ -614,6 +632,9 @@ function AccountRow({
   account: UiStatus["accounts"][number];
   isLast: boolean;
 }) {
+  const [resetCreditsState, setResetCreditsState] = useState<ResetCreditsState>({
+    kind: "idle",
+  });
   const fiveHour = account.quota?.fiveHour?.percentLeft ?? null;
   const weeklyQuota = account.quota?.weekly ?? null;
   const primaryQuotaLabel = formatPrimaryQuotaLabel(account);
@@ -630,8 +651,33 @@ function AccountRow({
               <div
                 className={`flex min-w-0 items-center gap-2 ${inactiveVisualClass}`}
               >
-                <div className="truncate text-label-md text-text-strong-950">
-                  {formatAccountDisplayName(account.alias)}
+                <div className="min-w-0">
+                  <Popover
+                    onOpenChange={(isOpen) => {
+                      if (isOpen && resetCreditsState.kind === "idle") {
+                        setResetCreditsState({ kind: "loading" });
+                        void fetchResetCredits(account.alias)
+                          .then((credits) => {
+                            setResetCreditsState({ kind: "ready", credits });
+                          })
+                          .catch((error: unknown) => {
+                            setResetCreditsState({
+                              kind: "error",
+                              message: errorMessage(error),
+                            });
+                          });
+                      }
+                    }}
+                  >
+                    <Popover.Trigger className="max-w-full truncate text-left text-label-md text-text-strong-950 underline-offset-2 hover:underline">
+                      {formatAccountDisplayName(account.alias)}
+                    </Popover.Trigger>
+                    <Popover.Content className="max-h-[70vh] w-[min(560px,calc(100vw-48px))] overflow-auto rounded-20 border border-stroke-soft-200 bg-bg-white-0 p-4 shadow-regular-lg">
+                      <Popover.Dialog>
+                        <ResetCreditsPopoverContent state={resetCreditsState} />
+                      </Popover.Dialog>
+                    </Popover.Content>
+                  </Popover>
                 </div>
                 {account.isActive ? (
                   <MetadataBadge color="green" label="active" />
@@ -684,6 +730,46 @@ function AccountRow({
         <div className="my-5 border-t border-dashed border-stroke-soft-200" />
       )}
     </>
+  );
+}
+
+function ResetCreditsPopoverContent({ state }: { state: ResetCreditsState }) {
+  if (state.kind === "loading" || state.kind === "idle") {
+    return <div className="text-paragraph-sm text-text-sub-600">读取中...</div>;
+  }
+  if (state.kind === "error") {
+    return <div className="text-paragraph-sm text-error-base">{state.message}</div>;
+  }
+  return (
+    <div className="grid gap-4">
+      <div>
+        <code className="rounded-10 bg-bg-weak-50 px-2 py-1 text-label-md text-text-strong-950">
+          available_count: {state.credits.available_count}
+        </code>
+      </div>
+      <Table.ScrollContainer className="overflow-x-auto">
+        <Table variant="plain">
+          <Table.Content aria-label="rate-limit reset credits" className="w-full">
+            <Table.Header className="text-center text-label-sm">
+              <Table.Column isRowHeader className="py-2 text-center">#</Table.Column>
+              <Table.Column className="py-2 text-center">status</Table.Column>
+              <Table.Column className="py-2 text-center">granted_at</Table.Column>
+              <Table.Column className="py-2 text-center">expires_at</Table.Column>
+            </Table.Header>
+            <Table.Body>
+            {state.credits.credits.map((credit, index) => (
+              <Table.Row className="border-b border-stroke-soft-200 last:border-0" key={`${credit.granted_at}:${index}`}>
+                <Table.Cell className="py-3 text-center align-top">{index + 1}</Table.Cell>
+                <Table.Cell className="py-3 text-center align-top">{credit.status}</Table.Cell>
+                <Table.Cell className="py-3 text-center align-top">{formatFullDateTime(credit.granted_at)}</Table.Cell>
+                <Table.Cell className="py-3 text-center align-top">{formatFullDateTime(credit.expires_at)}</Table.Cell>
+              </Table.Row>
+            ))}
+            </Table.Body>
+          </Table.Content>
+        </Table>
+      </Table.ScrollContainer>
+    </div>
   );
 }
 
@@ -974,6 +1060,17 @@ async function activateAccount(alias: string): Promise<UiStatus> {
   return (await response.json()) as UiStatus;
 }
 
+async function fetchResetCredits(alias: string): Promise<ResetCredits> {
+  const response = await fetch(
+    `/api/reset-credits?alias=${encodeURIComponent(alias)}`,
+  );
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message.trim() || `读取 reset credits 失败：${response.status}`);
+  }
+  return (await response.json()) as ResetCredits;
+}
+
 function formatFailureReason(value: string): string {
   const normalized = value.trim().replace(/[。.]$/, "");
   if (normalized === "读取额度失败") return "";
@@ -1083,6 +1180,18 @@ function formatDate(value: string | null): string {
   return date.toLocaleDateString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
+  });
+}
+
+function formatFullDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
