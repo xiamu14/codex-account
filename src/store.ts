@@ -23,6 +23,9 @@ export function assertAlias(alias: string): void {
   if (trimmed.length === 0) {
     throw new Error('请输入账号别名。');
   }
+  if (trimmed !== alias) {
+    throw new Error('账号别名不能包含首尾空格。');
+  }
   if (trimmed === '.' || trimmed === '..') {
     throw new Error('账号别名不能是点或双点。');
   }

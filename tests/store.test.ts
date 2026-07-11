@@ -33,6 +33,19 @@ describe('AccountStore', () => {
     expect(summaries[0]?.meta?.email).toBe('user@example.com');
   });
 
+  test('rejects aliases with leading or trailing whitespace', async () => {
+    const appHome = await tempHome();
+    const authPath = path.join(appHome, 'auth.json');
+    await writeFile(authPath, '{"token":"one"}', 'utf8');
+    const store = new AccountStore(appHome);
+
+    await expect(store.createAccount('user@example.com ', authPath, {
+      email: 'user@example.com',
+      planType: 'plus',
+      subscriptionExpiresAt: null
+    })).rejects.toThrow('首尾空格');
+  });
+
   test('does not delete active account', async () => {
     const appHome = await tempHome();
     const authPath = path.join(appHome, 'auth.json');
