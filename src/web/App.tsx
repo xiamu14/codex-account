@@ -405,11 +405,15 @@ function UsagePriorityBadge({
 function formatPrimaryQuotaLabel(
   account: UiStatus["accounts"][number],
 ): string {
-  if (isSubscriptionPlan(account.planType)) return "5h limit";
-  if (account.usagePriority.primaryWindow === "short") return "short limit";
+  if (account.usagePriority.primaryWindow === "short") {
+    return isSubscriptionPlan(account.planType) ? "5h limit" : "short limit";
+  }
   if (account.usagePriority.primaryWindow === "daily") return "daily limit";
   if (account.usagePriority.primaryWindow === "weekly") {
     return "weekly-like limit";
+  }
+  if (isSubscriptionPlan(account.planType) && account.quota?.fiveHour !== null) {
+    return "5h limit";
   }
   return "primary limit";
 }
@@ -635,7 +639,7 @@ function AccountRow({
   const [resetCreditsState, setResetCreditsState] = useState<ResetCreditsState>({
     kind: "idle",
   });
-  const fiveHour = account.quota?.fiveHour?.percentLeft ?? null;
+  const fiveHourQuota = account.quota?.fiveHour ?? null;
   const weeklyQuota = account.quota?.weekly ?? null;
   const primaryQuotaLabel = formatPrimaryQuotaLabel(account);
   const inactiveVisualClass = account.isInvalidToken
@@ -710,13 +714,15 @@ function AccountRow({
           </div>
         </div>
         <div
-          className={`mt-4 grid gap-4 ${weeklyQuota !== null ? "md:grid-cols-2" : ""} ${inactiveVisualClass}`}
+          className={`mt-4 grid gap-4 ${fiveHourQuota !== null && weeklyQuota !== null ? "md:grid-cols-2" : ""} ${inactiveVisualClass}`}
         >
-          <QuotaBlock
-            label={primaryQuotaLabel}
-            percent={fiveHour}
-            resetAt={account.quota?.fiveHour?.resetsAt ?? null}
-          />
+          {fiveHourQuota !== null ? (
+            <QuotaBlock
+              label={primaryQuotaLabel}
+              percent={fiveHourQuota.percentLeft}
+              resetAt={fiveHourQuota.resetsAt}
+            />
+          ) : null}
           {weeklyQuota !== null ? (
             <QuotaBlock
               label="weekly"

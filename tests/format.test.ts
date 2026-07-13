@@ -167,6 +167,15 @@ describe('renderList', () => {
     expect(rendered).toContain('8% left');
     expect(rendered).toContain('24% left');
   });
+
+  test('renders only the weekly row when the short window is absent', () => {
+    const account = makeSummary('weekly-only', false, null, 100);
+    const rendered = renderList([account]);
+
+    expect(rendered).not.toContain('5h limit');
+    expect(rendered).toContain('weekly');
+    expect(rendered).toContain('100% left');
+  });
 });
 
 describe('sortAccountsForList', () => {

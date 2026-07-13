@@ -2,6 +2,7 @@ export type LimitStatus = {
   percentLeft: number | null;
   resetsAt: string | null;
   rawReset: string | null;
+  windowDurationMins?: number | null;
 };
 
 export type AccountMeta = {

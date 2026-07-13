@@ -22,16 +22,20 @@ function renderAccount(account: AccountSummary): string {
   const plan = renderPlan(account.meta?.planType ?? null);
   const subscription = renderSubscription(account.meta?.subscriptionExpiresAt ?? null);
   const primaryLabel = describePrimaryLimit(account.quota, account.meta?.planType ?? null);
-  const fiveHour = renderLimit(account.quota?.fiveHour ?? null);
-  const weekly = renderLimit(account.quota?.weekly ?? null);
+  const fiveHour = account.quota?.fiveHour ?? null;
+  const weekly = account.quota?.weekly ?? null;
   const updatedAt = formatDateTime(account.quota?.updatedAt ?? account.meta?.updatedAt ?? null);
   const rows = [
     `${marker} ${chalk.bold(displayName)}${account.isActive ? chalk.green('  active') : ''}`,
     ...(displayEmail !== 'unknown' && displayEmail !== displayName ? [renderRow('email', displayEmail)] : []),
     renderRow('plan', plan),
     renderRow('subscription', subscription),
-    renderRow(primaryLabel, fiveHour, true),
-    renderRow('weekly', weekly, true),
+    ...(account.quota === null || fiveHour !== null
+      ? [renderRow(primaryLabel, renderLimit(fiveHour), true)]
+      : []),
+    ...(account.quota === null || weekly !== null
+      ? [renderRow('weekly', renderLimit(weekly), true)]
+      : []),
     renderRow('updated', updatedAt)
   ];
   return rows.join('\n');

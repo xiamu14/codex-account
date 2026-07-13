@@ -50,4 +50,20 @@ describe('ACP parsers', () => {
     expect(quota.weekly?.percentLeft).toBe(60);
     expect(quota.weekly?.rawReset).toBe('09:41 on 13 May');
   });
+
+  test('classifies generic windows by duration instead of position', () => {
+    const quota = parseQuota({
+      rateLimits: {
+        primary: {
+          usedPercent: 0,
+          windowDurationMins: 10080,
+          resetsAt: 1784530219
+        }
+      }
+    });
+
+    expect(quota.fiveHour).toBeNull();
+    expect(quota.weekly?.percentLeft).toBe(100);
+    expect(quota.weekly?.windowDurationMins).toBe(10080);
+  });
 });

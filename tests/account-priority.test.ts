@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   describePrimaryLimit,
+  getAccountUsagePriorityByAlias,
   getRecommendedNextAlias,
   sortAccountsByUsagePriority,
 } from "../src/account-priority.ts";
-import type { AccountSummary } from "../src/types.ts";
+import type { AccountQuota, AccountSummary } from "../src/types.ts";
 
 describe("account usage priority", () => {
   test("recommends the inactive usable account with the fastest refill", () => {
@@ -46,6 +47,32 @@ describe("account usage priority", () => {
     expect(
       describePrimaryLimit(makeQuota("2026-05-11T05:30:00.000Z"), "plus"),
     ).toBe("5h limit");
+  });
+
+  test("trusts total window duration near reset", () => {
+    const quota = makeQuota("2026-05-11T01:00:00.000Z");
+    quota.fiveHour!.windowDurationMins = 10_080;
+    expect(describePrimaryLimit(quota, "plus")).toBe("weekly-like limit");
+  });
+
+  test("treats a weekly-only account as usable", () => {
+    const account = makeSummary(
+      "weekly@example.com",
+      false,
+      50,
+      "2026-05-11T01:00:00.000Z",
+    );
+    account.quota!.fiveHour = null;
+    account.quota!.weekly = {
+      percentLeft: 100,
+      resetsAt: "2026-05-18T00:00:00.000Z",
+      rawReset: null,
+      windowDurationMins: 10_080,
+    };
+
+    expect(
+      getAccountUsagePriorityByAlias([account]).get(account.alias)?.status,
+    ).toBe("usable");
   });
 
   test("moves invalid token accounts behind all usable and blocked accounts", () => {
@@ -112,7 +139,7 @@ function makeSummary(
   };
 }
 
-function makeQuota(primaryReset: string) {
+function makeQuota(primaryReset: string): AccountQuota {
   return {
     fiveHour: {
       percentLeft: 50,

@@ -22,6 +22,8 @@ type RankedAccount = {
   sortKey: SortKey;
 };
 
+type KnownLimitStatus = LimitStatus & { percentLeft: number };
+
 type SortKey = {
   group: number;
   nextRefillMs: number;
@@ -62,11 +64,13 @@ export function describePrimaryLimit(
   quota: AccountQuota | null,
   planType: string | null = null,
 ): string {
-  if (isSubscriptionPlan(planType)) return "5h limit";
   const window = inferLimitWindow(quota?.fiveHour ?? null, quota?.updatedAt ?? null);
-  if (window === "short") return "short limit";
+  if (window === "short") {
+    return isSubscriptionPlan(planType) ? "5h limit" : "short limit";
+  }
   if (window === "daily") return "daily limit";
   if (window === "weekly") return "weekly-like limit";
+  if (isSubscriptionPlan(planType) && quota?.fiveHour !== null) return "5h limit";
   return "primary limit";
 }
 
@@ -81,6 +85,12 @@ export function inferLimitWindow(
   limit: LimitStatus | null,
   updatedAt: string | null,
 ): LimitWindowKind {
+  const durationHours = (limit?.windowDurationMins ?? 0) / 60;
+  if (durationHours > 0) {
+    if (durationHours <= 6) return "short";
+    if (durationHours <= 30) return "daily";
+    return "weekly";
+  }
   const reset = parseDate(limit?.resetsAt ?? null);
   const updated = parseDate(updatedAt);
   if (reset === null || updated === null) return "unknown";
@@ -131,21 +141,19 @@ function resolveUsagePriority(account: AccountSummary): AccountUsagePriority {
   if (!account.hasAuth) {
     return unavailable("unknown", "missing auth", primaryWindow, secondaryWindow);
   }
-  if (quota === null || primary === null || primary.percentLeft === null) {
+  const limits = [primary, secondary].filter(
+    (limit): limit is KnownLimitStatus => typeof limit?.percentLeft === "number",
+  );
+  if (quota === null || limits.length === 0) {
     return unavailable("unknown", "quota unknown", primaryWindow, secondaryWindow);
   }
 
-  const blockingResets: Date[] = [];
-  if (primary.percentLeft <= 0) {
-    const reset = parseDate(primary.resetsAt);
-    if (reset !== null) blockingResets.push(reset);
-  }
-  if (secondary?.percentLeft !== null && secondary?.percentLeft !== undefined && secondary.percentLeft <= 0) {
-    const reset = parseDate(secondary.resetsAt);
-    if (reset !== null) blockingResets.push(reset);
-  }
+  const blockedLimits = limits.filter((limit) => limit.percentLeft <= 0);
+  const blockingResets = blockedLimits
+    .map((limit) => parseDate(limit.resetsAt))
+    .filter((reset): reset is Date => reset !== null);
 
-  if (primary.percentLeft <= 0 || (secondary?.percentLeft !== null && secondary?.percentLeft !== undefined && secondary.percentLeft <= 0)) {
+  if (blockedLimits.length > 0) {
     const availableAt = blockingResets.length === 0
       ? null
       : new Date(Math.max(...blockingResets.map((date) => date.getTime()))).toISOString();
@@ -153,7 +161,10 @@ function resolveUsagePriority(account: AccountSummary): AccountUsagePriority {
       rank: null,
       status: "blocked",
       label: "blocked",
-      reason: primary.percentLeft <= 0 ? "primary empty" : "weekly empty",
+      reason:
+        typeof primary?.percentLeft === "number" && primary.percentLeft <= 0
+          ? "primary empty"
+          : "weekly empty",
       nextRefillAt: null,
       availableAt,
       primaryWindow,
@@ -161,12 +172,11 @@ function resolveUsagePriority(account: AccountSummary): AccountUsagePriority {
     };
   }
 
-  const nextRefillAt = earliestDate([
-    primary.percentLeft > 0 ? parseDate(primary.resetsAt) : null,
-    secondary !== null && secondary.percentLeft !== null && secondary.percentLeft > 0
-      ? parseDate(secondary.resetsAt)
-      : null,
-  ]);
+  const nextRefillAt = earliestDate(
+    limits.map((limit) =>
+      limit.percentLeft > 0 ? parseDate(limit.resetsAt) : null,
+    ),
+  );
 
   return {
     rank: null,

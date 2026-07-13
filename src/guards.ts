@@ -21,7 +21,10 @@ export function isLimitStatus(value: unknown): value is LimitStatus {
   return (
     (value.percentLeft === null || isNumber(value.percentLeft)) &&
     isNullableString(value.resetsAt) &&
-    isNullableString(value.rawReset)
+    isNullableString(value.rawReset) &&
+    (value.windowDurationMins === undefined ||
+      value.windowDurationMins === null ||
+      isNumber(value.windowDurationMins))
   );
 }
 

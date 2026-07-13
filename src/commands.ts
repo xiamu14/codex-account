@@ -1087,7 +1087,6 @@ export async function autoQuotaTickCommand(
         resetTime === null ||
         Number.isNaN(resetTime.getTime())
       ) {
-        failures[alias] = "缺少 5h 重置时间。";
         continue;
       }
       if (

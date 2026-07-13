@@ -317,6 +317,11 @@ export function parseAccountInfo(value: unknown): AcpAccountInfo {
 export function parseQuota(value: unknown): AccountQuota {
   const root = isRecord(value) ? value : {};
   const rateLimits = selectCodexRateLimits(root);
+  const primary = pickRecord(rateLimits, ["primary"]);
+  const secondary = pickRecord(rateLimits, ["secondary"]);
+  const windows = [primary, secondary].filter(
+    (window): window is Record<string, unknown> => window !== null,
+  );
   return {
     fiveHour: parseLimit(
       pickRecord(rateLimits, [
@@ -324,11 +329,14 @@ export function parseQuota(value: unknown): AccountQuota {
         "five_hour",
         "5h",
         "fiveHourLimit",
-        "primary",
-      ]) ?? findLimitByName(rateLimits, "5h"),
+      ]) ??
+        windows.find((window) => window.windowDurationMins === 300) ??
+        findLimitByName(rateLimits, "5h") ??
+        (primary?.windowDurationMins == null ? primary : null),
     ),
     weekly: parseLimit(
-      pickRecord(rateLimits, ["weekly", "week", "weeklyLimit", "secondary"]) ??
+      pickRecord(rateLimits, ["weekly", "week", "weeklyLimit"]) ??
+        windows.find((window) => window.windowDurationMins === 10_080) ??
         findLimitByName(rateLimits, "weekly"),
     ),
     updatedAt: new Date().toISOString(),
@@ -360,7 +368,11 @@ function parseLimit(value: unknown): LimitStatus | null {
   const rawReset =
     pickString(value, ["rawReset", "reset", "resetText", "displayReset"]) ??
     resetsAt;
-  return { percentLeft, resetsAt, rawReset };
+  const windowDurationMins = pickNumber(value, [
+    "windowDurationMins",
+    "window_duration_mins",
+  ]);
+  return { percentLeft, resetsAt, rawReset, windowDurationMins };
 }
 
 function selectCodexRateLimits(
