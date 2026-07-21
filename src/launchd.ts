@@ -1,11 +1,10 @@
 import { mkdir, writeFile, rm } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import path from "node:path";
 import type { CommandContext } from "./types.ts";
 
 const PORTLESS_PROXY_PORT = 1_355;
 const PORTLESS_NAME = "codexaccount";
-const UI_APP_PORT = 41_739;
 const WEB_LABEL = "com.codex-account.web";
 const QUOTA_LABEL = "com.codex-account.quota";
 
@@ -91,13 +90,6 @@ async function buildWebUi(projectRoot: string): Promise<void> {
 
 export function buildServices(projectRoot: string): LaunchdService[] {
   const entrypoint = path.join(projectRoot, "src", "main.ts");
-  const portlessEntrypoint = path.join(
-    projectRoot,
-    "node_modules",
-    "portless",
-    "dist",
-    "cli.js",
-  );
   return [
     {
       label: QUOTA_LABEL,
@@ -114,15 +106,8 @@ export function buildServices(projectRoot: string): LaunchdService[] {
       plistPath: path.join(launchAgentsRoot(), `${WEB_LABEL}.plist`),
       programArguments: [
         process.execPath,
-        portlessEntrypoint,
-        PORTLESS_NAME,
-        "--app-port",
-        String(UI_APP_PORT),
-        "--",
-        process.execPath,
         entrypoint,
         "ui",
-        "--serve",
       ],
     },
   ];
@@ -142,6 +127,7 @@ function renderPlist(options: {
     PATH: renderLaunchdPath(options.context),
     PORTLESS_HTTPS: "0",
     PORTLESS_LAN: "1",
+    ...renderPortlessLanIpEnv(networkInterfaces()),
     PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
   };
 
@@ -201,6 +187,30 @@ function renderLaunchdPath(context: CommandContext): string {
       return entry.trim().length > 0 && entries.indexOf(entry) === index;
     })
     .join(":");
+}
+
+function renderPortlessLanIpEnv(
+  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>,
+): Record<string, string> {
+  const lanIp = selectPortlessLanIp(interfaces);
+  return lanIp === null ? {} : { PORTLESS_LAN_IP: lanIp };
+}
+
+export function selectPortlessLanIp(
+  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>,
+): string | null {
+  const addresses = Object.values(interfaces)
+    .flatMap((items) => items ?? [])
+    .filter((item) => item.family === "IPv4" && !item.internal)
+    .map((item) => item.address);
+  return addresses.find(isPrivateLanIp) ?? addresses[0] ?? null;
+}
+
+function isPrivateLanIp(address: string): boolean {
+  if (address.startsWith("10.")) return true;
+  if (address.startsWith("192.168.")) return true;
+  const match = /^172\.(\d+)\./.exec(address);
+  return match !== null && Number(match[1]) >= 16 && Number(match[1]) <= 31;
 }
 
 async function launchctl(args: string[], ignoreFailure: boolean): Promise<void> {
