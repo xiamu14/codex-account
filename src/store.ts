@@ -95,6 +95,7 @@ export class AccountStore {
     await copyFileAtomic(authSourcePath, accountAuthPath(this.appHome, alias));
     await this.writeMeta({
       alias,
+      name: meta.name ?? null,
       email: meta.email,
       planType: meta.planType,
       subscriptionExpiresAt: meta.subscriptionExpiresAt,
@@ -223,6 +224,7 @@ export class AccountStore {
     const authAccount = await readAuthAccountInfo(accountAuthPath(this.appHome, alias));
     if (authAccount === null) return existing;
     if (
+      authAccount.name === null &&
       authAccount.email === null &&
       authAccount.planType === null &&
       authAccount.subscriptionExpiresAt === null
@@ -241,6 +243,7 @@ export class AccountStore {
     const now = new Date().toISOString();
     const next: AccountMeta = {
       alias,
+      name: authAccount.name ?? existing?.name ?? null,
       email: existing?.email ?? authAccount.email,
       planType:
         expiredPaidClaim && !trustExpiredPaidClaim
@@ -262,6 +265,7 @@ export class AccountStore {
     };
     if (
       existing !== null &&
+      existing.name === next.name &&
       existing.email === next.email &&
       existing.planType === next.planType &&
       existing.subscriptionExpiresAt === next.subscriptionExpiresAt &&
@@ -295,6 +299,7 @@ export class AccountStore {
 function normalizeAccountMeta(meta: AccountMeta): AccountMeta {
   return {
     ...meta,
+    name: meta.name ?? null,
     tokenStatus: meta.tokenStatus ?? "valid",
     tokenInvalidatedAt: meta.tokenInvalidatedAt ?? null,
     tokenInvalidReason: meta.tokenInvalidReason ?? null

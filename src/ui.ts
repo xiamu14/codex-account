@@ -374,6 +374,7 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
   return {
     accounts: accounts.map((account) => ({
       alias: account.alias,
+      name: account.meta?.name ?? null,
       email: account.meta?.email ?? null,
       planType: account.meta?.planType ?? null,
       subscriptionExpiresAt: account.meta?.subscriptionExpiresAt ?? null,

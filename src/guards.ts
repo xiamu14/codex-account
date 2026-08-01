@@ -32,6 +32,7 @@ export function isAccountMeta(value: unknown): value is AccountMeta {
   if (!isRecord(value)) return false;
   return (
     isString(value.alias) &&
+    (value.name === undefined || isNullableString(value.name)) &&
     isNullableString(value.email) &&
     isNullableString(value.planType) &&
     isNullableString(value.subscriptionExpiresAt) &&

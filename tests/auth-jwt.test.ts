@@ -6,6 +6,7 @@ describe("auth JWT account info", () => {
     const account = parseAuthAccountInfo({
       tokens: {
         id_token: makeJwt({
+          name: "Test User",
           email: "user@example.com",
           "https://api.openai.com/auth": {
             chatgpt_plan_type: "plus",
@@ -18,6 +19,7 @@ describe("auth JWT account info", () => {
     });
 
     expect(account).toEqual({
+      name: "Test User",
       email: "user@example.com",
       planType: "plus",
       subscriptionExpiresAt: "2026-06-15T11:52:11.000Z",
@@ -42,6 +44,7 @@ describe("auth JWT account info", () => {
     });
 
     expect(account).toEqual({
+      name: null,
       email: "user@example.com",
       planType: "plus",
       subscriptionExpiresAt: "2026-05-15T08:58:28.000Z",

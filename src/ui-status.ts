@@ -4,6 +4,7 @@ import type { AccountUsagePriority } from "./account-priority.ts";
 export type UiStatus = {
   accounts: Array<{
     alias: string;
+    name: string | null;
     email: string | null;
     planType: string | null;
     subscriptionExpiresAt: string | null;

@@ -682,6 +682,11 @@ function AccountRow({
                       </Popover.Dialog>
                     </Popover.Content>
                   </Popover>
+                  {account.name ? (
+                    <div className="mt-1 truncate text-paragraph-xs text-text-soft-400">
+                      {account.name}
+                    </div>
+                  ) : null}
                 </div>
                 {account.isActive ? (
                   <MetadataBadge color="green" label="active" />

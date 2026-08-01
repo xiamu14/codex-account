@@ -43,6 +43,7 @@ export function parseAuthAccountInfo(value: unknown): AcpAccountInfo | null {
       "subscriptionPlan",
     ]) ?? pickString(payload, ["planType", "plan_type", "plan"]);
   return {
+    name: pickString(payload, ["name"]),
     email: pickString(payload, ["email"]),
     planType,
     subscriptionExpiresAt,
@@ -55,6 +56,7 @@ export function mergeAccountInfo(
 ): AcpAccountInfo {
   if (authAccount === null) return account;
   return {
+    name: account.name ?? authAccount.name ?? null,
     email: account.email ?? authAccount.email,
     planType: authAccount.planType ?? account.planType,
     subscriptionExpiresAt:

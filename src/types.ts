@@ -7,6 +7,7 @@ export type LimitStatus = {
 
 export type AccountMeta = {
   alias: string;
+  name?: string | null;
   email: string | null;
   planType: string | null;
   subscriptionExpiresAt: string | null;
@@ -66,6 +67,7 @@ export type AutoQuotaState = {
 };
 
 export type AcpAccountInfo = {
+  name?: string | null;
   email: string | null;
   planType: string | null;
   subscriptionExpiresAt: string | null;
