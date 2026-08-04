@@ -244,6 +244,14 @@ async function runBrowserLoginWithoutOpeningBrowser(
       chunks.push(chunk);
       const output = Buffer.concat(chunks).toString("utf8");
       const messages = parseJsonLines(output);
+      const loginCompleted = messages.find(
+        (message) => message.method === "account/login/completed",
+      );
+      const loginFailure = extractLoginFailure(loginCompleted?.params);
+      if (loginFailure !== null) {
+        finish(() => reject(new Error(`登录失败：${loginFailure}`)));
+        return;
+      }
       if (!initialized && messages.some((message) => message.id === 1)) {
         initialized = true;
         child.stdin.write(
@@ -348,6 +356,8 @@ export function browserLoginStartRequest(id: number): JsonRpcRequest {
 
 type JsonRpcMessage = {
   id?: number;
+  method?: string;
+  params?: unknown;
   result?: unknown;
   error?: unknown;
 };
@@ -369,7 +379,7 @@ function parseJsonLines(output: string): JsonRpcMessage[] {
       if (
         typeof parsed === "object" &&
         parsed !== null &&
-        ("result" in parsed || "error" in parsed)
+        ("result" in parsed || "error" in parsed || "method" in parsed)
       ) {
         messages.push(parsed);
       }
@@ -378,6 +388,18 @@ function parseJsonLines(output: string): JsonRpcMessage[] {
     }
   }
   return messages;
+}
+
+function extractLoginFailure(params: unknown): string | null {
+  if (
+    typeof params !== "object" ||
+    params === null ||
+    !("success" in params) ||
+    params.success !== false
+  ) {
+    return null;
+  }
+  return JSON.stringify("error" in params ? params.error : params);
 }
 
 function extractAuthUrl(value: unknown): string | null {

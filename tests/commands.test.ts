@@ -1147,6 +1147,25 @@ describe("refreshCommand", () => {
     expect(savedAuth).toBe('{"token":"fresh"}');
   });
 
+  test("reports the Codex login failure details", async () => {
+    const context = await makeContext();
+    context.codexBin = await writeRefreshFakeCodex(context.appHome, {
+      loginError: "token exchange failed",
+    });
+    const authPath = path.join(context.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"old"}', "utf8");
+    const store = new AccountStore(context.appHome);
+    await store.createAccount("user@example.com", authPath, {
+      email: "user@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+
+    await expect(refreshCommand(context)).rejects.toThrow(
+      '登录失败："token exchange failed"',
+    );
+  });
+
   test("rejects login for a different account", async () => {
     const context = await makeContext();
     context.codexBin = await writeRefreshFakeCodex(context.appHome, {
@@ -1477,7 +1496,7 @@ async function writeFakeCodex(
 
 async function writeRefreshFakeCodex(
   root: string,
-  options: { email?: string } = {},
+  options: { email?: string; loginError?: string } = {},
 ): Promise<string> {
   const scriptPath = path.join(root, "fake-refresh-codex.mjs");
   const email = options.email ?? "user@example.com";
@@ -1499,9 +1518,18 @@ async function writeRefreshFakeCodex(
       "    }",
       "    send({ jsonrpc: '2.0', id: message.id, result: {} });",
       "  } else if (message.method === 'account/login/start') {",
-      "    mkdirSync(process.env.CODEX_HOME, { recursive: true });",
-      "    writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), '{\"token\":\"fresh\"}');",
+      ...(options.loginError === undefined
+        ? [
+            "    mkdirSync(process.env.CODEX_HOME, { recursive: true });",
+            "    writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), '{\"token\":\"fresh\"}');",
+          ]
+        : []),
       "    send({ jsonrpc: '2.0', id: message.id, result: { authUrl: 'https://example.com/login' } });",
+      ...(options.loginError === undefined
+        ? []
+        : [
+            `    send({ jsonrpc: '2.0', method: 'account/login/completed', params: { success: false, error: ${JSON.stringify(options.loginError)} } });`,
+          ]),
       "  } else if (message.method === 'account/read') {",
       `    send({ jsonrpc: '2.0', id: message.id, result: { account: { email: ${JSON.stringify(email)}, planType: 'plus' } } });`,
       "  }",
