@@ -225,14 +225,6 @@ function isLockBusyError(error: unknown): boolean {
 }
 
 async function runPortlessUi(context: CommandContext): Promise<void> {
-  const portlessBin = path.resolve(
-    import.meta.dir,
-    "..",
-    "node_modules",
-    "portless",
-    "dist",
-    "cli.js",
-  );
   const publicUrl = `http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -244,7 +236,6 @@ async function runPortlessUi(context: CommandContext): Promise<void> {
     PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
   };
   const args = [
-    portlessBin,
     PORTLESS_NAME,
     "--app-port",
     String(UI_APP_PORT),
@@ -276,7 +267,7 @@ function runPortlessProcess(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   const child = spawn(
-    process.execPath,
+    "portless",
     args,
     {
       cwd: context.cwd,

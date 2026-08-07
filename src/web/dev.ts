@@ -54,13 +54,6 @@ process.once("SIGTERM", () => {
   process.exitCode = 143;
 });
 
-const portlessEntrypoint = path.join(
-  projectRoot,
-  "node_modules",
-  "portless",
-  "dist",
-  "cli.js",
-);
 const publicUrl = `http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`;
 
 run("Hono UI 服务", process.execPath, ["run", "src/main.ts", "ui", "--serve"]);
@@ -73,8 +66,7 @@ run("Tailwind", process.execPath, [
   "src/web/static/alignui.css",
   "--watch",
 ]);
-run("Portless + Vite", process.execPath, [
-  portlessEntrypoint,
+run("Portless + Vite", "portless", [
   PORTLESS_NAME,
   "--app-port",
   String(VITE_DEV_PORT),

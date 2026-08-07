@@ -51,6 +51,39 @@ bun cli refresh --auto --dryRun
 http://codexaccount.local:1355
 ```
 
+## portless 依赖
+
+Web UI 使用全局 `portless` 命令启动 LAN 模式，不使用项目内 `portless` 依赖。
+新设备部署时必须先安装全局 portless，并确保全局 `node` 满足 portless 的版本要求。
+
+portless 0.15+ 要求 Node.js 24+，否则 `portless doctor` 会报：
+
+```text
+fail  Node.js 22.x is unsupported.
+      Install Node.js 24 or newer.
+```
+
+修复方式是让用户把全局 `node` 切到 Node.js 24+，例如用 fnm：
+
+```bash
+fnm install 24
+fnm default 24
+fnm use 24
+node -v
+portless doctor
+```
+
+不要在项目代码里写死某台机器的 fnm/nvm/Homebrew 路径；不同设备路径不一样。
+
+如果 `portless doctor` 已经没有 failure，但浏览器打不开
+`http://codexaccount.local:1355`，通常是 hosts/DNS 没同步。让用户在终端手动运行：
+
+```bash
+portless hosts sync
+```
+
+这个命令需要 sudo 密码，AI 工具里通常不能交互输入。
+
 `bun cli refresh --auto` 只自动刷新 token 已标记失效的账号。它读取
 `~/.codex-account/refresh-auto.json`，通过 Roxy 浏览器窗口完成登录。前置检查只读取
 Clash controller 的当前代理模式和 RoxyBrowser profile 里的代理国家，不访问 auth.openai.com 或 IP 查询服务。
@@ -68,10 +101,11 @@ Clash controller 的当前代理模式和 RoxyBrowser profile 里的代理国家
 
 操作步骤：
 1. 进入 codex-account 源码目录。
-2. 运行 bun install 安装依赖。
-3. 运行 bun cli install 安装 macOS 后台服务。
-4. 运行 bun cli start 启动后台服务。
-5. 启动完成后只需要告诉我：
+2. 确认全局 portless 可用：运行 portless doctor；如果提示 Node.js 版本不支持，先把全局 node 切到 Node.js 24+。
+3. 运行 bun install 安装依赖。
+4. 运行 bun cli install 安装 macOS 后台服务。
+5. 运行 bun cli start 启动后台服务。
+6. 启动完成后只需要告诉我：
    Web UI:
      http://codexaccount.local:1355
 
