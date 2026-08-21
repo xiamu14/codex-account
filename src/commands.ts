@@ -248,7 +248,9 @@ export async function saveCommand(
     );
     const savedAccount = findSavedAccount(await store.listSummaries(), account);
     if (savedAccount !== null) {
+      await store.replaceAuth(savedAccount.alias, liveAuth);
       await store.writeMeta(mergeMeta(savedAccount.alias, savedAccount.meta, account));
+      await store.markTokenValid(savedAccount.alias);
       context.stdout.write(`当前账号已保存为 ${savedAccount.alias}。\n`);
       return;
     }

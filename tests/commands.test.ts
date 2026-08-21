@@ -75,7 +75,7 @@ describe("saveCommand", () => {
     expect(output.text).toContain("已保存并激活 work");
   });
 
-  test("only reports when the current login is already saved", async () => {
+  test("updates the saved auth when the current login is already saved", async () => {
     const output = new CaptureStream();
     const context = await makeContext();
     context.stdout = output as unknown as NodeJS.WriteStream;
@@ -90,11 +90,15 @@ describe("saveCommand", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
+    await store.markTokenInvalid("saved", "旧 token 已失效");
 
     await saveCommand(context, "other");
 
     expect(output.text).toContain("已保存");
     expect(await store.listSummaries()).toHaveLength(1);
+    expect(await readFile(await store.authPath("saved"), "utf8")).toBe('{"token":"live"}');
+    expect((await store.readMeta("saved"))?.tokenStatus).toBe("valid");
+    expect((await store.readMeta("saved"))?.tokenInvalidatedAt).toBeNull();
   });
 });
 

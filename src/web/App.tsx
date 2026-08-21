@@ -464,9 +464,7 @@ function SwitchAccountCard({
   onActivate: (alias: string) => Promise<void>;
 }) {
   const activeAlias =
-    accounts.find((account) => account.isActive)?.alias ??
-    accounts[0]?.alias ??
-    "";
+    accounts.find((account) => account.isActive)?.alias ?? "";
   const inactiveAccounts = sortAccountsForUsage(accounts).filter(
     (account) => account.alias !== activeAlias,
   );
