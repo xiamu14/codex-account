@@ -223,7 +223,7 @@ describe("account transfer commands", () => {
 });
 
 describe("sync command", () => {
-  test("exports the active valid account and imports its auth and meta", async () => {
+  test("exports a selected valid account even when it is inactive", async () => {
     const source = await makeContext();
     const authPath = path.join(source.appHome, "auth.json");
     await writeFile(authPath, '{"token":"saved"}', "utf8");
@@ -233,8 +233,6 @@ describe("sync command", () => {
       planType: "plus",
       subscriptionExpiresAt: null,
     });
-    await store.setActive("work");
-
     await syncCommand(source, { select: true, export: true });
 
     const archive = (await readdir(path.join(source.cwd, ".sync"))).find(
@@ -247,6 +245,45 @@ describe("sync command", () => {
     const imported = new AccountStore(target.appHome);
     expect(await readFile(await imported.authPath("work"), "utf8")).toBe('{"token":"saved"}');
     expect((await imported.readMeta("work"))?.email).toBe("work@example.com");
+  });
+
+  test("trims legacy alias whitespace in the sync archive", async () => {
+    const source = await makeContext();
+    const alias = "work@example.com ";
+    const authPath = path.join(source.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"saved"}', "utf8");
+    const store = new AccountStore(source.appHome);
+    await mkdir(path.join(source.appHome, "accounts", alias), { recursive: true });
+    await writeFile(path.join(source.appHome, "accounts.json"), JSON.stringify({
+      version: 1,
+      accounts: [{ alias, createdAt: "2026-08-27T00:00:00.000Z" }],
+      activeAccount: alias,
+      updatedAt: "2026-08-27T00:00:00.000Z",
+    }), "utf8");
+    await writeFile(path.join(source.appHome, "accounts", alias, "auth.json"), '{"token":"saved"}', "utf8");
+    await writeFile(path.join(source.appHome, "accounts", alias, "meta.json"), JSON.stringify({
+      alias,
+      email: "work@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+      tokenStatus: "valid",
+      tokenInvalidatedAt: null,
+      tokenInvalidReason: null,
+      createdAt: "2026-08-27T00:00:00.000Z",
+      updatedAt: "2026-08-27T00:00:00.000Z",
+    }), "utf8");
+
+    await syncCommand(source, { select: true, export: true });
+    const archive = (await readdir(path.join(source.cwd, ".sync"))).find(
+      (name) => name.startsWith("work@example.com_") && name.endsWith(".tar.gz"),
+    );
+    expect(archive).toBeDefined();
+
+    const target = await makeContext();
+    await syncCommand(target, { import: path.join(source.cwd, ".sync", archive!) });
+    expect((await new AccountStore(target.appHome).listSummaries())[0]?.alias).toBe(
+      "work@example.com",
+    );
   });
 });
 

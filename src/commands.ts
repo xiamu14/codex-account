@@ -236,25 +236,34 @@ export async function syncCommand(
     await withLock(context.appHome, async () => {
       const store = new AccountStore(context.appHome);
       const candidates = (await store.listSummaries()).filter(
-        (account) => account.isActive && account.hasAuth && account.tokenStatus === "valid",
+        (account) => account.hasAuth && account.tokenStatus === "valid",
       );
       const alias = await selectAlias(
         candidates.map((account) => account.alias),
         "同步账号",
       );
+      const syncAlias = alias.trim();
+      assertAlias(syncAlias);
       const target = path.resolve(
         context.cwd,
         ".sync",
-        `${alias}_${syncTimestamp()}.tar.gz`,
+        `${syncAlias}_${syncTimestamp()}.tar.gz`,
       );
       const sourceHome = accountHome(context.appHome, alias);
+      const meta = await store.readMeta(alias);
+      if (meta === null) {
+        throw new Error(`账号 ${alias} 缺少 meta.json。`);
+      }
       const stagingRoot = await mkdtemp(path.join(tmpdir(), "cxa-sync-export-"));
       const staging = path.join(stagingRoot, SYNC_ROOT);
       try {
         await prepareExportFile(target);
         await mkdir(staging, { recursive: true });
         await copyFileAtomic(path.join(sourceHome, "auth.json"), path.join(staging, "auth.json"));
-        await copyFileAtomic(path.join(sourceHome, "meta.json"), path.join(staging, "meta.json"));
+        await writeJsonAtomic(path.join(staging, "meta.json"), {
+          ...meta,
+          alias: syncAlias,
+        });
         await createCompressedExport(stagingRoot, target, SYNC_ROOT);
       } finally {
         await removePath(stagingRoot);
