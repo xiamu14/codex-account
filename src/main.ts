@@ -61,17 +61,7 @@ function usage(): string {
         ["bun cli delete", "删除账号"],
         ["bun cli refresh", "刷新账号 token"],
       ],
-    },
-    {
-      title: "额度",
-      rows: [
-        ["bun cli call", "刷新 quota 状态"],
-        ["bun cli call --select", "选择账号刷新状态"],
-        ["bun cli quota", "刷新额度"],
-        ["bun cli quota --select", "选择账号刷新额度"],
-        ["bun cli quota --stop", "停止自动刷新"],
-      ],
-    },
+    }
   ];
   const rows = groups.flatMap((group) => group.rows);
   const commandWidth = Math.max(...rows.map(([command]) => command.length));
