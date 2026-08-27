@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -20,6 +20,7 @@ import {
   retryFailedQuotaCommand,
   resolveAccountTarget,
   saveCommand,
+  syncCommand,
 } from "../src/commands.ts";
 import { readAutoQuotaState, writeAutoQuotaState } from "../src/auto-quota.ts";
 import { autoQuotaPidPath, autoQuotaStatePath } from "../src/paths.ts";
@@ -218,6 +219,34 @@ describe("account transfer commands", () => {
     expect((await new AccountStore(target.appHome).listSummaries())[0]?.alias).toBe(
       "default-name",
     );
+  });
+});
+
+describe("sync command", () => {
+  test("exports the active valid account and imports its auth and meta", async () => {
+    const source = await makeContext();
+    const authPath = path.join(source.appHome, "auth.json");
+    await writeFile(authPath, '{"token":"saved"}', "utf8");
+    const store = new AccountStore(source.appHome);
+    await store.createAccount("work", authPath, {
+      email: "work@example.com",
+      planType: "plus",
+      subscriptionExpiresAt: null,
+    });
+    await store.setActive("work");
+
+    await syncCommand(source, { select: true, export: true });
+
+    const archive = (await readdir(path.join(source.cwd, ".sync"))).find(
+      (name) => name.startsWith("work_") && name.endsWith(".tar.gz"),
+    );
+    expect(archive).toBeDefined();
+    const target = await makeContext();
+    await syncCommand(target, { import: path.join(source.cwd, ".sync", archive!) });
+
+    const imported = new AccountStore(target.appHome);
+    expect(await readFile(await imported.authPath("work"), "utf8")).toBe('{"token":"saved"}');
+    expect((await imported.readMeta("work"))?.email).toBe("work@example.com");
   });
 });
 

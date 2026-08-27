@@ -3,3 +3,4 @@ dist
 src/web/dist/
 src/web/static/alignui.css
 codex-account-export.tar.gz
+.sync/

@@ -93,6 +93,7 @@ const AUTO_QUOTA_SERVICE_MAX_DELAY_MS =
   AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000;
 const DEFAULT_EXPORT_FILE = "codex-account-export.tar.gz";
 const EXPORT_MARKER = ".codex-account-export.json";
+const SYNC_ROOT = ".codex-account-sync";
 const execFileAsync = promisify(execFile);
 
 export async function exportCommand(
@@ -227,6 +228,78 @@ export async function importCommand(
   });
 }
 
+export async function syncCommand(
+  context: CommandContext,
+  options: { select?: boolean; export?: boolean; import?: string },
+): Promise<void> {
+  if (options.export === true) {
+    await withLock(context.appHome, async () => {
+      const store = new AccountStore(context.appHome);
+      const candidates = (await store.listSummaries()).filter(
+        (account) => account.isActive && account.hasAuth && account.tokenStatus === "valid",
+      );
+      const alias = await selectAlias(
+        candidates.map((account) => account.alias),
+        "同步账号",
+      );
+      const target = path.resolve(
+        context.cwd,
+        ".sync",
+        `${alias}_${syncTimestamp()}.tar.gz`,
+      );
+      const sourceHome = accountHome(context.appHome, alias);
+      const stagingRoot = await mkdtemp(path.join(tmpdir(), "cxa-sync-export-"));
+      const staging = path.join(stagingRoot, SYNC_ROOT);
+      try {
+        await prepareExportFile(target);
+        await mkdir(staging, { recursive: true });
+        await copyFileAtomic(path.join(sourceHome, "auth.json"), path.join(staging, "auth.json"));
+        await copyFileAtomic(path.join(sourceHome, "meta.json"), path.join(staging, "meta.json"));
+        await createCompressedExport(stagingRoot, target, SYNC_ROOT);
+      } finally {
+        await removePath(stagingRoot);
+      }
+      context.stdout.write(`已生成同步文件：${target}\n`);
+    });
+    return;
+  }
+
+  if (options.import !== undefined) {
+    await withLock(context.appHome, async () => {
+      const archive = path.resolve(context.cwd, options.import!);
+      const extractRoot = await mkdtemp(path.join(tmpdir(), "cxa-sync-import-"));
+      try {
+        await extractCompressedExport(archive, extractRoot);
+        const source = path.join(extractRoot, SYNC_ROOT);
+        const metaPath = path.join(source, "meta.json");
+        const authPath = path.join(source, "auth.json");
+        const parsedMeta = await readJsonIfExists(metaPath);
+        if (!isAccountMeta(parsedMeta)) {
+          throw new Error("同步文件的 meta.json 格式不正确。");
+        }
+        assertAlias(parsedMeta.alias);
+        if (!(await pathExists(authPath))) {
+          throw new Error("同步文件缺少 auth.json。");
+        }
+
+        const store = new AccountStore(context.appHome);
+        const state = await store.loadState();
+        const existing = state.accounts.find((account) => account.alias === parsedMeta.alias);
+        if (existing === undefined) {
+          state.accounts.push({ alias: parsedMeta.alias, createdAt: parsedMeta.createdAt });
+        }
+        await mkdir(accountHome(context.appHome, parsedMeta.alias), { recursive: true });
+        await copyFileAtomic(authPath, accountAuthPath(context.appHome, parsedMeta.alias));
+        await copyFileAtomic(metaPath, accountMetaPath(context.appHome, parsedMeta.alias));
+        await store.saveState(state);
+        context.stdout.write(`已导入 ${parsedMeta.alias} 的同步 token。\n`);
+      } finally {
+        await removePath(extractRoot);
+      }
+    });
+  }
+}
+
 export async function saveCommand(
   context: CommandContext,
   alias?: string,
@@ -340,6 +413,12 @@ function resolveTransferPath(
   return path.resolve(cwd, target ?? fallback);
 }
 
+function syncTimestamp(): string {
+  const now = new Date();
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return `${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
 async function prepareExportFile(target: string): Promise<void> {
   if (await pathExists(target)) {
     await removePath(target);
@@ -350,9 +429,10 @@ async function prepareExportFile(target: string): Promise<void> {
 async function createCompressedExport(
   stagingRoot: string,
   target: string,
+  root = ".codex-account",
 ): Promise<void> {
   try {
-    await execFileAsync("tar", ["-czf", target, "-C", stagingRoot, ".codex-account"]);
+    await execFileAsync("tar", ["-czf", target, "-C", stagingRoot, root]);
   } catch (error) {
     throw new Error(`创建导出文件失败：${formatProcessError(error)}`);
   }

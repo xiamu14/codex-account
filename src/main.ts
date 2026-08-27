@@ -16,6 +16,7 @@ import {
   quotaCommand,
   refreshCommand,
   saveCommand,
+  syncCommand,
 } from "./commands.ts";
 import chalk from "chalk";
 import { resolveCodexBin } from "./codex.ts";
@@ -57,6 +58,8 @@ function usage(): string {
         ["bun cli login", "登录并保存账号"],
         ["bun cli export", "导出账号和 token"],
         ["bun cli import", "导入账号和 token"],
+        ["bun cli sync --select --export", "同步当前账号 token"],
+        ["bun cli sync --import <file>", "导入同步文件"],
         ["bun cli deactive", "退出当前账号"],
         ["bun cli delete", "删除账号"],
         ["bun cli refresh", "刷新账号 token"],
@@ -172,6 +175,18 @@ async function run(argv: string[]): Promise<number> {
       const context = await buildContext();
       await importCommand(context, argv[1]);
       return 0;
+    }
+    case "sync": {
+      const context = await buildContext();
+      if (argv[1] === "--select" && argv[2] === "--export" && argv[3] === undefined) {
+        await syncCommand(context, { select: true, export: true });
+        return 0;
+      }
+      if (argv[1] === "--import" && argv[2] !== undefined && argv[3] === undefined) {
+        await syncCommand(context, { import: argv[2] });
+        return 0;
+      }
+      throw new Error("sync 只支持 --select --export 或 --import <file>。");
     }
     case "list": {
       const context = await buildContext();
