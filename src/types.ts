@@ -41,6 +41,7 @@ export type AccountSummary = {
   isActive: boolean;
   hasAuth: boolean;
   tokenStatus: "valid" | "invalid" | "missing";
+  tokenCreatedAt?: string | null;
   tokenInvalidatedAt: string | null;
   tokenInvalidReason: string | null;
   meta: AccountMeta | null;

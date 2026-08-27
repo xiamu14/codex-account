@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseAuthAccountInfo } from "../src/auth-jwt.ts";
+import { parseAuthAccountInfo, parseAuthTokenCreatedAt } from "../src/auth-jwt.ts";
 
 describe("auth JWT account info", () => {
   test("parses plan and subscription expiry from id token payload", () => {
@@ -28,6 +28,14 @@ describe("auth JWT account info", () => {
 
   test("ignores auth files without an id token", () => {
     expect(parseAuthAccountInfo({ token: "legacy" })).toBeNull();
+  });
+
+  test("parses token creation time from access token iat", () => {
+    expect(parseAuthTokenCreatedAt({
+      tokens: {
+        access_token: makeJwt({ iat: 1770000000 }),
+      },
+    })).toBe("2026-02-02T02:40:00.000Z");
   });
 
   test("keeps expired subscription claims for stale-date warnings", () => {

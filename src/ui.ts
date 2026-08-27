@@ -371,6 +371,7 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       subscriptionExpiresAt: account.meta?.subscriptionExpiresAt ?? null,
       isActive: account.isActive,
       hasAuth: account.hasAuth,
+      tokenCreatedAt: account.tokenCreatedAt ?? null,
       isInvalidToken: account.tokenStatus === "invalid",
       quota: account.quota,
       usagePriority: priorityByAlias.get(account.alias) ?? {

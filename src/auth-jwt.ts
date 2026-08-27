@@ -11,6 +11,21 @@ export async function readAuthAccountInfo(
   return parseAuthAccountInfo(auth);
 }
 
+export async function readAuthTokenCreatedAt(
+  authPath: string,
+): Promise<string | null> {
+  const auth = await readJsonIfExists(authPath);
+  return parseAuthTokenCreatedAt(auth);
+}
+
+export function parseAuthTokenCreatedAt(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const token = pickAccessToken(value) ?? pickIdToken(value);
+  if (token === null) return null;
+  const payload = decodeJwtPayload(token);
+  return payload === null ? null : pickDate(payload, ["iat"]);
+}
+
 export function parseAuthAccountInfo(value: unknown): AcpAccountInfo | null {
   if (!isRecord(value)) return null;
   const token = pickIdToken(value);
@@ -70,6 +85,12 @@ function pickIdToken(value: Record<string, unknown>): string | null {
   }
   if (isString(value.id_token)) return value.id_token;
   return null;
+}
+
+function pickAccessToken(value: Record<string, unknown>): string | null {
+  return isRecord(value.tokens) && isString(value.tokens.access_token)
+    ? value.tokens.access_token
+    : null;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {

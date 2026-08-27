@@ -649,7 +649,7 @@ function AccountRow({
       <article aria-disabled={account.isInvalidToken} className="bg-bg-white-0">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 w-full">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-4">
               <div
                 className={`flex min-w-0 items-center gap-2 ${inactiveVisualClass}`}
               >
@@ -672,7 +672,7 @@ function AccountRow({
                     }}
                   >
                     <Popover.Trigger className="max-w-full truncate text-left text-label-md text-text-strong-950 underline-offset-2 hover:underline">
-                      {formatAccountDisplayName(account.alias)}
+                      {account.name ?? formatAccountDisplayName(account.alias)}
                     </Popover.Trigger>
                     <Popover.Content className="max-h-[70vh] w-[min(560px,calc(100vw-48px))] overflow-auto rounded-20 border border-stroke-soft-200 bg-bg-white-0 p-4 shadow-regular-lg">
                       <Popover.Dialog>
@@ -680,11 +680,6 @@ function AccountRow({
                       </Popover.Dialog>
                     </Popover.Content>
                   </Popover>
-                  {account.name ? (
-                    <div className="mt-1 truncate text-paragraph-xs text-text-soft-400">
-                      {account.name}
-                    </div>
-                  ) : null}
                 </div>
                 {account.isActive ? (
                   <MetadataBadge color="green" label="active" />
@@ -694,9 +689,7 @@ function AccountRow({
               {account.isInvalidToken ? (
                 <MetadataBadge color="red" label="expired token" />
               ) : null}
-              <div className="flex-1"></div>
-
-              <div className={inactiveVisualClass}>
+              <div className={`shrink-0 ${inactiveVisualClass}`}>
                 {account.subscriptionExpiresAt ? (
                   <div
                     className={`text-paragraph-xs ${
@@ -713,6 +706,18 @@ function AccountRow({
                   </div>
                 ) : null}
               </div>
+            </div>
+            <div
+              className={`mt-1 flex items-center justify-start gap-4 ${inactiveVisualClass}`}
+            >
+              <div className="min-w-0 truncate text-paragraph-xs text-text-soft-400">
+                {account.email ?? formatAccountDisplayName(account.alias)}
+              </div>
+              {account.tokenCreatedAt ? (
+                <div className="shrink-0 text-paragraph-xs text-text-soft-400">
+                  {formatTokenCreatedAt(account.tokenCreatedAt)}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1190,6 +1195,16 @@ function formatDate(value: string | null): string {
     month: "2-digit",
     day: "2-digit",
   });
+}
+
+function formatTokenCreatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${month}-${day} ${hour}:${minute}`;
 }
 
 function formatFullDateTime(value: string): string {
