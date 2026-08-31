@@ -1,5 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { readAuthAccountInfo, readAuthTokenCreatedAt } from './auth-jwt.ts';
+import { readAuthAccountInfo, readAuthTokenExpiresAt } from './auth-jwt.ts';
 import { copyFileAtomic, pathExists, readJsonIfExists, removePath, writeJsonAtomic } from './fs.ts';
 import { isAccountMeta, isAccountQuota, isAccountsState } from './guards.ts';
 import {
@@ -144,8 +144,8 @@ export class AccountStore {
         isActive: state.activeAccount === alias,
         hasAuth,
         tokenStatus: hasAuth ? (meta?.tokenStatus ?? "valid") : "missing",
-        tokenCreatedAt: hasAuth
-          ? await readAuthTokenCreatedAt(accountAuthPath(this.appHome, alias))
+        tokenExpiresAt: hasAuth
+          ? await readAuthTokenExpiresAt(accountAuthPath(this.appHome, alias))
           : null,
         tokenInvalidatedAt: meta?.tokenInvalidatedAt ?? null,
         tokenInvalidReason: meta?.tokenInvalidReason ?? null,

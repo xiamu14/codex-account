@@ -56,10 +56,8 @@ function usage(): string {
       rows: [
         ["bun cli save", "保存当前账号"],
         ["bun cli login", "登录并保存账号"],
-        ["bun cli export", "导出账号和 token"],
-        ["bun cli import", "导入账号和 token"],
-        ["bun cli sync --select --export", "同步当前账号 token"],
-        ["bun cli sync --import <file>", "导入同步文件"],
+        ["bun cli sync --select --export", "导出账号同步文件"],
+        ["bun cli sync --import <file>", "导入账号同步文件"],
         ["bun cli deactive", "退出当前账号"],
         ["bun cli delete", "删除账号"],
         ["bun cli refresh", "刷新账号 token"],

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Popover } from "@heroui/react/popover";
 import { Table } from "@heroui/react/table";
+import { ClockFill } from "@gravity-ui/icons";
 import { RiCheckboxCircleFill } from "@remixicon/react";
 import {
   formatAccountDisplayName,
@@ -713,9 +714,10 @@ function AccountRow({
               <div className="min-w-0 truncate text-paragraph-xs text-text-soft-400">
                 {account.email ?? formatAccountDisplayName(account.alias)}
               </div>
-              {account.tokenCreatedAt ? (
-                <div className="shrink-0 text-paragraph-xs text-text-soft-400">
-                  {formatTokenCreatedAt(account.tokenCreatedAt)}
+              {account.tokenExpiresAt ? (
+                <div className="flex shrink-0 items-center gap-1 text-paragraph-xs text-text-soft-400">
+                  <ClockFill width={14} height={14} aria-hidden="true" />
+                  {formatTokenExpiresAt(account.tokenExpiresAt)}
                 </div>
               ) : null}
             </div>
@@ -1197,7 +1199,7 @@ function formatDate(value: string | null): string {
   });
 }
 
-function formatTokenCreatedAt(value: string): string {
+function formatTokenExpiresAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   const month = String(date.getMonth() + 1).padStart(2, "0");

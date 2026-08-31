@@ -11,19 +11,19 @@ export async function readAuthAccountInfo(
   return parseAuthAccountInfo(auth);
 }
 
-export async function readAuthTokenCreatedAt(
+export async function readAuthTokenExpiresAt(
   authPath: string,
 ): Promise<string | null> {
   const auth = await readJsonIfExists(authPath);
-  return parseAuthTokenCreatedAt(auth);
+  return parseAuthTokenExpiresAt(auth);
 }
 
-export function parseAuthTokenCreatedAt(value: unknown): string | null {
+export function parseAuthTokenExpiresAt(value: unknown): string | null {
   if (!isRecord(value)) return null;
   const token = pickAccessToken(value) ?? pickIdToken(value);
   if (token === null) return null;
   const payload = decodeJwtPayload(token);
-  return payload === null ? null : pickDate(payload, ["iat"]);
+  return payload === null ? null : pickDate(payload, ["exp"]);
 }
 
 export function parseAuthAccountInfo(value: unknown): AcpAccountInfo | null {
