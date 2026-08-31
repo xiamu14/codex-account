@@ -56,8 +56,8 @@ function usage(): string {
       rows: [
         ["bun cli save", "保存当前账号"],
         ["bun cli login", "登录并保存账号"],
-        ["bun cli sync --select --export", "导出账号同步文件"],
-        ["bun cli sync --import <file>", "导入账号同步文件"],
+        ["bun cli sync --export ", "选择并同步账号 token"],
+        ["bun cli sync --import <file>", "导入账号 token"],
         ["bun cli deactive", "退出当前账号"],
         ["bun cli delete", "删除账号"],
         ["bun cli refresh", "刷新账号 token"],
@@ -176,7 +176,14 @@ async function run(argv: string[]): Promise<number> {
     }
     case "sync": {
       const context = await buildContext();
-      if (argv[1] === "--select" && argv[2] === "--export" && argv[3] === undefined) {
+      const syncArgs = argv.slice(1);
+      if (
+        syncArgs.length >= 1 &&
+        syncArgs.length <= 2 &&
+        syncArgs.includes("--export") &&
+        new Set(syncArgs).size === syncArgs.length &&
+        syncArgs.every((argument) => argument === "--export" || argument === "--select")
+      ) {
         await syncCommand(context, { select: true, export: true });
         return 0;
       }
@@ -184,7 +191,7 @@ async function run(argv: string[]): Promise<number> {
         await syncCommand(context, { import: argv[2] });
         return 0;
       }
-      throw new Error("sync 只支持 --select --export 或 --import <file>。");
+      throw new Error("sync 只支持 --export [--select] 或 --import <file>。");
     }
     case "list": {
       const context = await buildContext();
