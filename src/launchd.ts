@@ -106,8 +106,7 @@ export function buildServices(projectRoot: string): LaunchdService[] {
       plistPath: path.join(launchAgentsRoot(), `${WEB_LABEL}.plist`),
       programArguments: [
         process.execPath,
-        entrypoint,
-        "ui",
+        path.join(projectRoot, "scripts", "ui-lan.ts"),
       ],
     },
   ];

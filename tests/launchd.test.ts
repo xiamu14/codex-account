@@ -3,16 +3,15 @@ import path from "node:path";
 import { buildServices, selectPortlessLanIp } from "../src/launchd.ts";
 
 describe("launchd services", () => {
-  test("runs the UI launcher so portless fallback can apply", () => {
+  test("runs the independent LAN UI launcher", () => {
     const projectRoot = "/tmp/codex-account";
     const webService = buildServices(projectRoot).find((service) =>
-      service.programArguments.includes("ui"),
+      service.programArguments.some((argument) => argument.endsWith("/ui-lan.ts")),
     );
 
     expect(webService?.programArguments).toEqual([
       process.execPath,
-      path.join(projectRoot, "src", "main.ts"),
-      "ui",
+      path.join(projectRoot, "scripts", "ui-lan.ts"),
     ]);
     expect(webService?.programArguments).not.toContain(
       path.join(projectRoot, "node_modules", ".bin", "portless"),
