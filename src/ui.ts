@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Readable } from "node:stream";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import {
@@ -24,8 +23,6 @@ import type { AutoQuotaState, CommandContext } from "./types.ts";
 import type { UiStatus } from "./ui-status.ts";
 
 const UI_APP_PORT = 41_739;
-const PORTLESS_PROXY_PORT = 1_355;
-const PORTLESS_NAME = "codexaccount";
 const UI_EVENT_INTERVAL_MS = 5_000;
 const UI_EVENT_HEARTBEAT_DATA = "ok";
 const UI_LOCK_WAIT_MS = 30_000;
@@ -225,111 +222,30 @@ function isLockBusyError(error: unknown): boolean {
 }
 
 async function runPortlessUi(context: CommandContext): Promise<void> {
-  const publicUrl = `http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`;
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    CXA_HOME: context.appHome,
-    CODEX_HOME: context.codexHome,
-    CXA_CODEX_BIN: context.codexBin,
-    PORTLESS_HTTPS: "0",
-    PORTLESS_LAN: "1",
-    PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
-  };
-  const args = [
-    PORTLESS_NAME,
-    "--app-port",
-    String(UI_APP_PORT),
-    "--",
-    process.execPath,
-    "--hot",
-    path.resolve(process.argv[1] ?? "src/main.ts"),
-    "ui",
-    "--serve",
-  ];
-
-  context.stdout.write(`Web UI 已启动：${publicUrl}\n`);
-  try {
-    await runPortlessProcess(context, args, env);
-  } catch (error) {
-    if (!shouldRetryWithoutPortlessLanIp(error, env)) throw error;
-    context.stderr.write(
-      "portless 当前 proxy 使用 127.0.0.1，已去掉固定 LAN IP 重试。\n",
-    );
-    const fallbackEnv = { ...env };
-    delete fallbackEnv.PORTLESS_LAN_IP;
-    await runPortlessProcess(context, args, fallbackEnv);
-  }
-}
-
-function runPortlessProcess(
-  context: CommandContext,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<void> {
   const child = spawn(
-    "portless",
-    args,
+    process.execPath,
+    [path.resolve(import.meta.dir, "..", "scripts", "portless-lan.ts")],
     {
       cwd: context.cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        CXA_HOME: context.appHome,
+        CODEX_HOME: context.codexHome,
+        CXA_CODEX_BIN: context.codexBin,
+      },
+      stdio: "inherit",
     },
   );
-
-  let stderr = "";
-  pipeOutput(child.stdout, context.stdout);
-  pipeOutput(child.stderr, context.stderr, (chunk) => {
-    stderr += chunk;
-  });
-
-  return new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0 || signal === "SIGINT" || signal === "SIGTERM") {
         resolve();
         return;
       }
-      reject(new PortlessExitError(signal ?? code, stderr));
+      reject(new Error(`Web UI 启动失败：${signal ?? code}`));
     });
   });
-}
-
-function pipeOutput(
-  stream: Readable | null,
-  target: NodeJS.WriteStream,
-  collect?: (chunk: string) => void,
-): void {
-  stream?.on("data", (chunk: Buffer) => {
-    collect?.(chunk.toString("utf8"));
-    target.write(chunk);
-  });
-}
-
-export function shouldRetryWithoutPortlessLanIp(
-  error: unknown,
-  env: NodeJS.ProcessEnv,
-): boolean {
-  return (
-    env.PORTLESS_LAN_IP !== undefined &&
-    error instanceof PortlessExitError &&
-    isPortlessLanIpMismatch(error.stderr)
-  );
-}
-
-export function isPortlessLanIpMismatch(stderr: string): boolean {
-  return (
-    stderr.includes("Proxy is already running on port") &&
-    stderr.includes("requested LAN IP")
-  );
-}
-
-class PortlessExitError extends Error {
-  constructor(
-    readonly exit: number | NodeJS.Signals | null,
-    readonly stderr: string,
-  ) {
-    super(`portless 已退出：${exit}`);
-  }
 }
 
 async function readStatus(context: CommandContext): Promise<UiStatus> {

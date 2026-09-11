@@ -9,7 +9,7 @@
     "build:ui": "bun run build:ui-css && vite build",
     "watch:ui-css": "tailwindcss -i src/web/globals.css -o src/web/static/alignui.css --watch",
     "ui": "bun ./src/main.ts ui",
-    "ui:lan": "bun run scripts/ui-lan.ts",
+    "ui:lan": "bun run scripts/portless-lan.ts",
     "ui:dev": "bun run src/web/dev.ts",
     "ui:serve": "bun ./src/main.ts ui --serve",
     "test": "bun test",
