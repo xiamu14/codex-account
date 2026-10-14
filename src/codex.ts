@@ -472,6 +472,44 @@ export async function cleanupRunHome(runHome: string): Promise<void> {
   await removePath(runHome);
 }
 
+export async function persistRotatedAcpAuth(
+  authPath: string,
+  runHome: string,
+  originalAuth: string,
+): Promise<void> {
+  const runAuthPath = path.join(runHome, "auth.json");
+  const [currentAuth, updatedAuth] = await Promise.all([
+    readFile(authPath, "utf8"),
+    readFile(runAuthPath, "utf8"),
+  ]);
+  if (currentAuth !== originalAuth) return;
+
+  const originalTokens = readAuthTokens(originalAuth);
+  const updatedTokens = readAuthTokens(updatedAuth);
+  if (
+    originalTokens !== null &&
+    updatedTokens !== null &&
+    originalTokens !== updatedTokens
+  ) {
+    await copyFileAtomic(runAuthPath, authPath);
+  }
+}
+
+function readAuthTokens(auth: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(auth);
+    if (typeof parsed !== "object" || parsed === null || !("tokens" in parsed)) {
+      return null;
+    }
+    const tokens = parsed.tokens;
+    return typeof tokens === "object" && tokens !== null
+      ? JSON.stringify(tokens)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function activateAuth(
   authPath: string,
   codexHome: string,

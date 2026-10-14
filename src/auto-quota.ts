@@ -4,8 +4,8 @@ import { autoQuotaStatePath } from "./paths.ts";
 import type { AccountStore } from "./store.ts";
 import type { AutoQuotaState } from "./types.ts";
 
-export const AUTO_QUOTA_MIN_INTERVAL_MINUTES = 5;
-export const AUTO_QUOTA_MAX_INTERVAL_MINUTES = 6;
+export const AUTO_QUOTA_MIN_INTERVAL_MINUTES = 2;
+export const AUTO_QUOTA_MAX_INTERVAL_MINUTES = 3;
 
 export function createDefaultAutoQuotaState(): AutoQuotaState {
   const now = new Date().toISOString();

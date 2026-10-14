@@ -20,6 +20,7 @@ import {
   activateAuth,
   cleanupRunHome,
   hasCodexAuth,
+  persistRotatedAcpAuth,
   prepareAcpHome,
   runCodexCall,
   runCodexLogin,
@@ -765,8 +766,11 @@ async function refreshAccountQuota(
   alias: string,
 ): Promise<{ quota: AccountQuota | null; error: string | null }> {
   let runHome: string | null = null;
+  let authPath: string | null = null;
+  let originalAuth: string | null = null;
   try {
-    const authPath = await store.authPath(alias);
+    authPath = await store.authPath(alias);
+    originalAuth = await readFile(authPath, "utf8");
     const authAccount = await readAuthAccountInfo(authPath);
     runHome = await prepareAcpHome({
       appHome: context.appHome,
@@ -800,7 +804,13 @@ async function refreshAccountQuota(
     return { quota: null, error: snapshot.quotaError };
   } finally {
     if (runHome !== null) {
-      await cleanupRunHome(runHome);
+      try {
+        if (authPath !== null && originalAuth !== null) {
+          await persistRotatedAcpAuth(authPath, runHome, originalAuth);
+        }
+      } finally {
+        await cleanupRunHome(runHome);
+      }
     }
   }
 }
@@ -832,12 +842,16 @@ async function callAccount(
   tokenInvalidated: boolean;
 }> {
   let runHome: string | null = null;
+  let authPath: string | null = null;
+  let originalAuth: string | null = null;
   try {
     await store.requireAccount(call.alias);
+    authPath = await store.authPath(call.alias);
+    originalAuth = await readFile(authPath, "utf8");
     runHome = await prepareAcpHome({
       appHome: context.appHome,
       codexHome: context.codexHome,
-      authPath: await store.authPath(call.alias),
+      authPath,
     });
     const reply = await runCodexCall(
       context.codexBin,
@@ -863,7 +877,13 @@ async function callAccount(
     };
   } finally {
     if (runHome !== null) {
-      await cleanupRunHome(runHome);
+      try {
+        if (authPath !== null && originalAuth !== null) {
+          await persistRotatedAcpAuth(authPath, runHome, originalAuth);
+        }
+      } finally {
+        await cleanupRunHome(runHome);
+      }
     }
   }
 }
@@ -930,7 +950,9 @@ export async function autoQuotaStartCommand(
     });
   }
 
-  context.stdout.write("自动刷新已开启。每 5-6 分钟检查一次。\n");
+  context.stdout.write(
+    `自动刷新已开启。每 ${AUTO_QUOTA_MIN_INTERVAL_MINUTES}-${AUTO_QUOTA_MAX_INTERVAL_MINUTES} 分钟检查一次。\n`,
+  );
   if (startResult.successes.length > 0) {
     context.stdout.write("已刷新当前额度：\n");
     for (const alias of startResult.successes) {
@@ -1146,7 +1168,16 @@ export async function autoQuotaTickCommand(
     let now = new Date();
     const successes: string[] = [];
     const quotaFetches: string[] = [];
-    const failures: Record<string, string> = {};
+    const pausedAliases = new Set(
+      Object.keys(current.lastFailureByAlias).filter(
+        (alias) => (current.consecutiveFailureCountByAlias[alias] ?? 0) >= 3,
+      ),
+    );
+    const failures = Object.fromEntries(
+      Object.entries(current.lastFailureByAlias).filter(([alias]) =>
+        pausedAliases.has(alias),
+      ),
+    );
     const recoveredAliases: string[] = [];
     const invalidTokenAliases: string[] = [];
     const handledFiveHourResets = { ...current.handledFiveHourResets };
@@ -1156,6 +1187,7 @@ export async function autoQuotaTickCommand(
     const quotaByAlias = new Map<string, AccountQuota>();
 
     for (const [index, alias] of sortedAliases.entries()) {
+      if (pausedAliases.has(alias)) continue;
       await waitBeforeQuotaRefresh(index, sortedAliases.length);
       const fetched = await refreshQuotaQuietly(context, store, alias);
       if (fetched.quota === null) {
@@ -1271,7 +1303,9 @@ export async function autoQuotaTickCommand(
       lastFailureByAlias: failures,
       consecutiveFailureCountByAlias: mergeFailureCounts(
         current.consecutiveFailureCountByAlias,
-        failures,
+        Object.fromEntries(
+          Object.entries(failures).filter(([alias]) => !pausedAliases.has(alias)),
+        ),
         recoveredAliases,
       ),
       lastQuotaFetchAliases: quotaFetches,
@@ -1702,7 +1736,7 @@ function renderAutoQuotaStatus(
       const count = state.consecutiveFailureCountByAlias[alias] ?? 1;
       const detail =
         count >= 3
-          ? `${reason} 连续失败 ${count} 次，已暂停。修复后会自动恢复。`
+          ? `${reason} 连续失败 ${count} 次，已暂停。请手动重试。`
           : `${reason} 连续失败 ${count} 次，下次再试。`;
       lines.push(
         `  ${chalk.yellow(padText(alias, width))}  ${chalk.dim(detail)}`,

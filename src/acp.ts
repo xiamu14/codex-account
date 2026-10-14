@@ -173,9 +173,13 @@ async function runAppServerRequests(
       child.kill();
       const output = Buffer.concat([...chunks, ...errors]).toString("utf8");
       reject(
-        new Error(output.trim() || "等待 Codex 响应超时。"),
+        new Error(
+          output.trim()
+            ? `等待 Codex 响应超时。\n${output.trim()}`
+            : "等待 Codex 响应超时。",
+        ),
       );
-    }, 10_000);
+    }, 50_000);
 
     function finish(result: () => void): void {
       if (settled) return;
