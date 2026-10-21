@@ -59,6 +59,7 @@ export type AutoQuotaState = {
   lastSuccessAliases: string[];
   lastFailureByAlias: Record<string, string>;
   consecutiveFailureCountByAlias: Record<string, number>;
+  failurePausedUntilByAlias: Record<string, string>;
   lastQuotaFetchAliases: string[];
   invalidTokenAliases: string[];
   handledFiveHourResets: Record<string, string>;

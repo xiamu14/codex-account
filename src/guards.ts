@@ -96,6 +96,7 @@ export function isAutoQuotaState(value: unknown): value is AutoQuotaState {
     isStringArray(value.lastSuccessAliases) &&
     isStringRecord(value.lastFailureByAlias) &&
     isNumberRecord(value.consecutiveFailureCountByAlias) &&
+    isStringRecord(value.failurePausedUntilByAlias) &&
     isStringArray(value.lastQuotaFetchAliases) &&
     (value.invalidTokenAliases === undefined ||
       isStringArray(value.invalidTokenAliases)) &&

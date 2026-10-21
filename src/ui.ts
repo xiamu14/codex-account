@@ -13,7 +13,11 @@ import {
   getAccountUsagePriorityByAlias,
   getRecommendedNextAlias,
 } from "./account-priority.ts";
-import { activeCommand, retryFailedQuotaCommand } from "./commands.ts";
+import {
+  activeCommand,
+  buildAutoQuotaSchedule,
+  retryFailedQuotaCommand,
+} from "./commands.ts";
 import { readJsonIfExists } from "./fs.ts";
 import { isNumber, isRecord, isString } from "./guards.ts";
 import { accountAuthPath } from "./paths.ts";
@@ -26,8 +30,6 @@ const UI_APP_PORT = 41_739;
 const UI_EVENT_INTERVAL_MS = 5_000;
 const UI_EVENT_HEARTBEAT_DATA = "ok";
 const UI_LOCK_WAIT_MS = 30_000;
-const AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS = 5 * 60_000;
-const AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS = 6 * 60_000;
 const AUTO_QUOTA_CHECK_GRACE_MS = 2 * 60_000;
 let quotaRetryJob: Promise<void> | null = null;
 
@@ -265,15 +267,15 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
       readAutoQuotaState(context.appHome),
     ]);
   }
-  const schedule = buildAutoQuotaSchedule(
-    accounts
-      .map((account) => ({
-        alias: account.alias,
-        reset: account.quota?.fiveHour?.resetsAt ?? null,
-      }))
-      .filter(
-        (item): item is { alias: string; reset: string } => item.reset !== null,
-      ),
+  const taskSchedule = buildAutoQuotaSchedule(
+    accounts.flatMap((account) => {
+      const reset = account.quota?.fiveHour?.resetsAt;
+      return reset === null ||
+        reset === undefined ||
+        autoState.handledFiveHourResets[account.alias] === reset
+        ? []
+        : [{ alias: account.alias, reset }];
+    }),
   );
   const priorityByAlias = getAccountUsagePriorityByAlias(accounts);
   const recommendedNextAlias = getRecommendedNextAlias(accounts);
@@ -301,7 +303,11 @@ async function readStatus(context: CommandContext): Promise<UiStatus> {
         secondaryWindow: "unknown",
       },
       isRecommendedNext: account.alias === recommendedNextAlias,
-      nextRefreshAt: schedule.get(account.alias)?.toISOString() ?? null,
+      nextRefreshAt: resolveAccountRetryAt(
+        account.alias,
+        autoState.failurePausedUntilByAlias,
+        taskSchedule,
+      ),
       lastQuotaFetchAt: autoState.lastQuotaFetchAliases.includes(account.alias)
         ? autoState.lastQuotaFetchAt
         : null,
@@ -435,43 +441,21 @@ function resolveNextCheckAt(state: AutoQuotaState): string | null {
   return `${formatDateTime(min.toISOString())} - ${formatDateTime(max.toISOString())}`;
 }
 
-function buildAutoQuotaSchedule(
-  items: Array<{ alias: string; reset: string }>,
-): Map<string, Date> {
-  const groups = new Map<string, Array<{ alias: string; reset: string }>>();
-  for (const item of items) {
-    const group = groups.get(item.reset) ?? [];
-    group.push(item);
-    groups.set(item.reset, group);
+function resolveAccountRetryAt(
+  alias: string,
+  pausedUntilByAlias: Record<string, string>,
+  taskSchedule: Map<string, Date>,
+): string | null {
+  const pausedUntil = pausedUntilByAlias[alias];
+  if (pausedUntil === undefined || new Date(pausedUntil).getTime() <= Date.now()) {
+    return null;
   }
-
-  const schedule = new Map<string, Date>();
-  for (const [reset, group] of groups.entries()) {
-    const base = new Date(reset);
-    if (Number.isNaN(base.getTime())) continue;
-    for (const item of group) {
-      const offsetMs = stableRandomInt(
-        `${item.alias}:${reset}:offset`,
-        AUTO_QUOTA_ACCOUNT_MIN_DELAY_MS,
-        AUTO_QUOTA_ACCOUNT_MAX_DELAY_MS,
-      );
-      schedule.set(item.alias, new Date(base.getTime() + offsetMs));
-    }
-  }
-  return schedule;
-}
-
-function stableHash(value: string): number {
-  let hash = 2166136261;
-  for (const char of value) {
-    hash ^= char.codePointAt(0)!;
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function stableRandomInt(value: string, min: number, max: number): number {
-  return min + (stableHash(value) % (max - min + 1));
+  const taskAt = taskSchedule.get(alias);
+  return taskAt !== undefined &&
+    taskAt.getTime() > Date.now() &&
+    taskAt.getTime() < new Date(pausedUntil).getTime()
+    ? taskAt.toISOString()
+    : pausedUntil;
 }
 
 function formatDateTime(value: string | null): string {

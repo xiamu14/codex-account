@@ -1,5 +1,5 @@
 import path from "node:path";
-import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
@@ -9,6 +9,8 @@ import { readAcpAccount, readAcpSnapshotBestEffort } from "./acp.ts";
 import { formatAccountDisplayName } from "./account-display.ts";
 import { mergeAccountInfo, readAuthAccountInfo } from "./auth-jwt.ts";
 import {
+  AUTO_QUOTA_FAILURE_COOLDOWN_MINUTES,
+  AUTO_QUOTA_FAILURE_LIMIT,
   AUTO_QUOTA_MAX_INTERVAL_MINUTES,
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
   migrateInvalidTokensFromAutoQuota,
@@ -678,10 +680,11 @@ export async function retryFailedQuotaCommand(
       const result = await refreshQuotaQuietly(context, store, alias);
       if (result.quota === null) {
         if (isTokenInvalidated(result.error)) {
-          logInvalidTokenFailure(context, alias, "retry-quota", result.error);
+          await logInvalidTokenFailure(context, alias, "retry-quota", result.error);
           invalidTokenAliases.push(alias);
           continue;
         }
+        await logAutoQuotaFailure(context, alias, "retry-quota", result.error);
         failures[alias] = formatAutoQuotaFailure(alias, result.error);
         context.stdout.write(`已重试 ${alias}，额度未刷新。\n`);
         continue;
@@ -691,17 +694,20 @@ export async function retryFailedQuotaCommand(
       context.stdout.write(`已刷新 ${alias}\n`);
     }
 
+    const failureState = mergeQuotaFailureState(
+      current.consecutiveFailureCountByAlias,
+      current.failurePausedUntilByAlias,
+      failures,
+      recoveredAliases,
+      now,
+    );
     await writeAutoQuotaState(context.appHome, {
       ...current,
       lastTickAt: now.toISOString(),
       lastQuotaFetchAt:
         quotaFetches.length > 0 ? now.toISOString() : current.lastQuotaFetchAt,
       lastFailureByAlias: failures,
-      consecutiveFailureCountByAlias: mergeFailureCounts(
-        current.consecutiveFailureCountByAlias,
-        failures,
-        recoveredAliases,
-      ),
+      ...failureState,
       lastQuotaFetchAliases: quotaFetches,
     });
     await markInvalidTokenAliases(store, invalidTokenAliases);
@@ -911,6 +917,13 @@ export async function autoQuotaStartCommand(
     await migrateInvalidTokensFromAutoQuota(context.appHome, store);
     startResult = await refreshAllQuotaForAutoStart(context, store);
     const now = new Date();
+    const failureState = mergeQuotaFailureState(
+      state.consecutiveFailureCountByAlias,
+      state.failurePausedUntilByAlias,
+      startResult.failures,
+      startResult.successes,
+      now,
+    );
     await writeAutoQuotaState(context.appHome, {
       ...state,
       enabled: true,
@@ -928,11 +941,7 @@ export async function autoQuotaStartCommand(
           ? now.toISOString()
           : state.lastQuotaFetchAt,
       lastFailureByAlias: startResult.failures,
-      consecutiveFailureCountByAlias: mergeFailureCounts(
-        state.consecutiveFailureCountByAlias,
-        startResult.failures,
-        startResult.successes,
-      ),
+      ...failureState,
       lastQuotaFetchAliases: startResult.successes,
     });
     await markInvalidTokenAliases(store, startResult.invalidTokenAliases);
@@ -986,10 +995,11 @@ async function refreshAllQuotaForAutoStart(
     const result = await refreshQuotaQuietly(context, store, alias);
     if (result.quota === null) {
       if (isTokenInvalidated(result.error)) {
-        logInvalidTokenFailure(context, alias, "start-quota", result.error);
+        await logInvalidTokenFailure(context, alias, "start-quota", result.error);
         invalidTokenAliases.push(alias);
         continue;
       }
+      await logAutoQuotaFailure(context, alias, "start-quota", result.error);
       failures[alias] = formatAutoQuotaFailure(alias, result.error);
       continue;
     }
@@ -1165,25 +1175,66 @@ export async function autoQuotaTickCommand(
       return;
     }
 
-    let now = new Date();
+    const now = new Date();
     const successes: string[] = [];
     const quotaFetches: string[] = [];
-    const pausedAliases = new Set(
-      Object.keys(current.lastFailureByAlias).filter(
-        (alias) => (current.consecutiveFailureCountByAlias[alias] ?? 0) >= 3,
-      ),
+    const failureCounts = { ...current.consecutiveFailureCountByAlias };
+    const failurePausedUntilByAlias = {
+      ...current.failurePausedUntilByAlias,
+    };
+    const sortedAccounts = sortAccountsByUsagePriority(
+      await store.listSummaries(),
     );
+    const sortedAliases = sortedAccounts.map((account) => account.alias);
+    const taskSchedule = buildAutoQuotaSchedule(
+      sortedAccounts.flatMap((account) => {
+        const reset = account.quota?.fiveHour?.resetsAt;
+        return reset === null ||
+          reset === undefined ||
+          current.handledFiveHourResets[account.alias] === reset
+          ? []
+          : [{ alias: account.alias, reset }];
+      }),
+    );
+    const pausedAliases = new Set<string>();
+    for (const alias of Object.keys(current.lastFailureByAlias)) {
+      if ((failureCounts[alias] ?? 0) < AUTO_QUOTA_FAILURE_LIMIT) continue;
+      let pausedUntil = failurePausedUntilByAlias[alias];
+      if (pausedUntil === undefined) {
+        pausedUntil = new Date(
+          now.getTime() + AUTO_QUOTA_FAILURE_COOLDOWN_MINUTES * 60_000,
+        ).toISOString();
+        failurePausedUntilByAlias[alias] = pausedUntil;
+      }
+      const pausedUntilTime = new Date(pausedUntil).getTime();
+      const taskAt = taskSchedule.get(alias)?.getTime();
+      const taskIsNear =
+        taskAt !== undefined &&
+        taskAt >= now.getTime() - AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000 &&
+        taskAt <= now.getTime() + AUTO_QUOTA_MAX_INTERVAL_MINUTES * 60_000 &&
+        taskAt <= pausedUntilTime;
+      if (taskIsNear) {
+        delete failurePausedUntilByAlias[alias];
+        delete failureCounts[alias];
+      } else if (
+        Number.isFinite(pausedUntilTime) &&
+        pausedUntilTime > now.getTime()
+      ) {
+        pausedAliases.add(alias);
+      } else {
+        delete failurePausedUntilByAlias[alias];
+        delete failureCounts[alias];
+      }
+    }
     const failures = Object.fromEntries(
       Object.entries(current.lastFailureByAlias).filter(([alias]) =>
         pausedAliases.has(alias),
       ),
     );
+    const attemptedFailures: Record<string, string> = {};
     const recoveredAliases: string[] = [];
     const invalidTokenAliases: string[] = [];
     const handledFiveHourResets = { ...current.handledFiveHourResets };
-    const sortedAliases = sortAccountsByUsagePriority(
-      await store.listSummaries(),
-    ).map((account) => account.alias);
     const quotaByAlias = new Map<string, AccountQuota>();
 
     for (const [index, alias] of sortedAliases.entries()) {
@@ -1192,12 +1243,15 @@ export async function autoQuotaTickCommand(
       const fetched = await refreshQuotaQuietly(context, store, alias);
       if (fetched.quota === null) {
         if (isTokenInvalidated(fetched.error)) {
-          logInvalidTokenFailure(context, alias, "tick-quota", fetched.error);
+          await logInvalidTokenFailure(context, alias, "tick-quota", fetched.error);
           invalidTokenAliases.push(alias);
+          delete failurePausedUntilByAlias[alias];
+          delete failureCounts[alias];
           continue;
         }
-        logAutoQuotaFailure(context, alias, "tick-quota", fetched.error);
+        await logAutoQuotaFailure(context, alias, "tick-quota", fetched.error);
         failures[alias] = formatAutoQuotaFailure(alias, fetched.error);
+        attemptedFailures[alias] = failures[alias]!;
         continue;
       }
       const quota = fetched.quota;
@@ -1253,11 +1307,15 @@ export async function autoQuotaTickCommand(
       });
       if (result.error !== null) {
         if (result.tokenInvalidated) {
-          logInvalidTokenFailure(context, alias, "tick-call", result.error);
+          await logInvalidTokenFailure(context, alias, "tick-call", result.error);
           invalidTokenAliases.push(alias);
+          delete failurePausedUntilByAlias[alias];
+          delete failureCounts[alias];
           continue;
         }
+        await logAutoQuotaFailure(context, alias, "tick-call", result.error);
         failures[alias] = result.error;
+        attemptedFailures[alias] = result.error;
         continue;
       }
 
@@ -1267,22 +1325,25 @@ export async function autoQuotaTickCommand(
       const refreshed = await refreshQuotaQuietly(context, store, alias);
       if (refreshed.quota === null) {
         if (isTokenInvalidated(refreshed.error)) {
-          logInvalidTokenFailure(
+          await logInvalidTokenFailure(
             context,
             alias,
             "tick-post-call-quota",
             refreshed.error,
           );
           invalidTokenAliases.push(alias);
+          delete failurePausedUntilByAlias[alias];
+          delete failureCounts[alias];
           continue;
         }
-        logAutoQuotaFailure(
+        await logAutoQuotaFailure(
           context,
           alias,
           "tick-post-call-quota",
           refreshed.error,
         );
         failures[alias] = "已发送刷新请求，但读取新额度失败。";
+        attemptedFailures[alias] = failures[alias]!;
       } else {
         pushUnique(quotaFetches, alias);
         if (refreshed.quota.fiveHour?.resetsAt !== resetValue) {
@@ -1291,6 +1352,13 @@ export async function autoQuotaTickCommand(
       }
     }
 
+    const failureState = mergeQuotaFailureState(
+      failureCounts,
+      failurePausedUntilByAlias,
+      attemptedFailures,
+      recoveredAliases,
+      now,
+    );
     await writeAutoQuotaState(context.appHome, {
       ...current,
       intervalMinutes: AUTO_QUOTA_MIN_INTERVAL_MINUTES,
@@ -1301,13 +1369,7 @@ export async function autoQuotaTickCommand(
       lastCallAt: successes.length > 0 ? now.toISOString() : current.lastCallAt,
       lastSuccessAliases: successes,
       lastFailureByAlias: failures,
-      consecutiveFailureCountByAlias: mergeFailureCounts(
-        current.consecutiveFailureCountByAlias,
-        Object.fromEntries(
-          Object.entries(failures).filter(([alias]) => !pausedAliases.has(alias)),
-        ),
-        recoveredAliases,
-      ),
+      ...failureState,
       lastQuotaFetchAliases: quotaFetches,
       handledFiveHourResets,
     });
@@ -1332,6 +1394,37 @@ function mergeFailureCounts(
     next[alias] = (next[alias] ?? 0) + 1;
   }
   return next;
+}
+
+function mergeQuotaFailureState(
+  currentCounts: Record<string, number>,
+  currentPausedUntil: Record<string, string>,
+  failures: Record<string, string>,
+  recoveredAliases: string[],
+  now: Date,
+): Pick<AutoQuotaState, "consecutiveFailureCountByAlias" | "failurePausedUntilByAlias"> {
+  const consecutiveFailureCountByAlias = mergeFailureCounts(
+    currentCounts,
+    failures,
+    recoveredAliases,
+  );
+  const failurePausedUntilByAlias = { ...currentPausedUntil };
+  for (const alias of recoveredAliases) {
+    delete failurePausedUntilByAlias[alias];
+  }
+  for (const alias of Object.keys(failures)) {
+    if (
+      consecutiveFailureCountByAlias[alias]! >= AUTO_QUOTA_FAILURE_LIMIT
+    ) {
+      failurePausedUntilByAlias[alias] = new Date(
+        now.getTime() + AUTO_QUOTA_FAILURE_COOLDOWN_MINUTES * 60_000,
+      ).toISOString();
+    }
+  }
+  return {
+    consecutiveFailureCountByAlias,
+    failurePausedUntilByAlias,
+  };
 }
 
 async function isAutoCallEligibleAccount(
@@ -1735,8 +1828,8 @@ function renderAutoQuotaStatus(
     for (const [alias, reason] of failures) {
       const count = state.consecutiveFailureCountByAlias[alias] ?? 1;
       const detail =
-        count >= 3
-          ? `${reason} 连续失败 ${count} 次，已暂停。请手动重试。`
+        count >= AUTO_QUOTA_FAILURE_LIMIT
+          ? `${reason} 连续失败 ${count} 次，进入 ${AUTO_QUOTA_FAILURE_COOLDOWN_MINUTES} 分钟冷却，到期后自动重试。`
           : `${reason} 连续失败 ${count} 次，下次再试。`;
       lines.push(
         `  ${chalk.yellow(padText(alias, width))}  ${chalk.dim(detail)}`,
@@ -1812,7 +1905,7 @@ function parseDate(value: string | null): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function buildAutoQuotaSchedule(
+export function buildAutoQuotaSchedule(
   items: Array<{ alias: string; reset: string }>,
 ): Map<string, Date> {
   const groups = new Map<string, Array<{ alias: string; reset: string }>>();
@@ -1936,40 +2029,74 @@ async function markInvalidTokenAliases(
   }
 }
 
-function logInvalidTokenFailure(
+async function logInvalidTokenFailure(
   context: CommandContext,
   alias: string,
   stage: string,
   error: string | null,
-): void {
-  context.stderr.write(
-    `${JSON.stringify({
-      level: "warn",
-      event: "token_invalidated",
-      alias,
-      stage,
-      error,
-      at: new Date().toISOString(),
-    })}\n`,
-  );
+): Promise<void> {
+  await writeQuotaDiagnostic(context, {
+    level: "warn",
+    event: "token_invalidated",
+    alias,
+    stage,
+    error,
+    at: new Date().toISOString(),
+  });
 }
 
-function logAutoQuotaFailure(
+async function logAutoQuotaFailure(
   context: CommandContext,
   alias: string,
   stage: string,
   error: string | null,
-): void {
-  context.stderr.write(
-    `${JSON.stringify({
-      level: "warn",
-      event: "quota_refresh_failed",
-      alias,
-      stage,
-      error,
-      at: new Date().toISOString(),
-    })}\n`,
-  );
+): Promise<void> {
+  await writeQuotaDiagnostic(context, {
+    level: "warn",
+    event: "quota_refresh_failed",
+    alias,
+    stage,
+    error,
+    at: new Date().toISOString(),
+  });
+}
+
+async function writeQuotaDiagnostic(
+  context: CommandContext,
+  record: {
+    level: string;
+    event: string;
+    alias: string;
+    stage: string;
+    error: string | null;
+    at: string;
+  },
+): Promise<void> {
+  const line = `${JSON.stringify({
+    ...record,
+    error: redactDiagnosticSecrets(record.error ?? "未知错误"),
+  })}\n`;
+  context.stderr.write(line);
+  try {
+    const logsPath = path.join(context.appHome, "logs");
+    await mkdir(logsPath, { recursive: true });
+    await appendFile(path.join(logsPath, "quota-refresh.log"), line, "utf8");
+  } catch {
+    // A diagnostic logging failure must not interrupt account refresh.
+  }
+}
+
+function redactDiagnosticSecrets(value: string): string {
+  return value
+    .replace(
+      /(\"(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization|cookie|api[_-]?key|client[_-]?secret|password)\"\s*:\s*)\"[^\"]*\"/gi,
+      '$1"[REDACTED]"',
+    )
+    .replace(/\bBearer\s+[^\s"',}]+/gi, "Bearer [REDACTED]")
+    .replace(
+      /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+      "[REDACTED_JWT]",
+    );
 }
 
 function pickCallMessage(): string {

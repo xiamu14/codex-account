@@ -136,7 +136,6 @@ async function run(argv: string[]): Promise<number> {
       if (argv[1] !== undefined) {
         throw new Error("restart 不需要参数。");
       }
-      await stopLaunchdServices();
       const context = await buildContext();
       await startLaunchdServices(context);
       process.stdout.write("后台服务已重启。\n");

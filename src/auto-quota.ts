@@ -6,6 +6,8 @@ import type { AutoQuotaState } from "./types.ts";
 
 export const AUTO_QUOTA_MIN_INTERVAL_MINUTES = 2;
 export const AUTO_QUOTA_MAX_INTERVAL_MINUTES = 3;
+export const AUTO_QUOTA_FAILURE_LIMIT = 3;
+export const AUTO_QUOTA_FAILURE_COOLDOWN_MINUTES = 10;
 
 export function createDefaultAutoQuotaState(): AutoQuotaState {
   const now = new Date().toISOString();
@@ -20,6 +22,7 @@ export function createDefaultAutoQuotaState(): AutoQuotaState {
     lastSuccessAliases: [],
     lastFailureByAlias: {},
     consecutiveFailureCountByAlias: {},
+    failurePausedUntilByAlias: {},
     lastQuotaFetchAliases: [],
     invalidTokenAliases: [],
     handledFiveHourResets: {},
@@ -102,6 +105,9 @@ function migrateAutoQuotaState(value: unknown): AutoQuotaState | null {
     consecutiveFailureCountByAlias: isNumberRecord(value.consecutiveFailureCountByAlias)
       ? value.consecutiveFailureCountByAlias
       : {},
+    failurePausedUntilByAlias: isStringRecord(value.failurePausedUntilByAlias)
+      ? value.failurePausedUntilByAlias
+      : {},
     lastQuotaFetchAliases: value.lastQuotaFetchAliases,
     invalidTokenAliases: value.invalidTokenAliases === undefined ? [] : value.invalidTokenAliases,
     handledFiveHourResets: value.handledFiveHourResets,
@@ -117,16 +123,21 @@ function normalizeInvalidTokenState(state: AutoQuotaState): AutoQuotaState {
   const consecutiveFailureCountByAlias = {
     ...state.consecutiveFailureCountByAlias,
   };
+  const failurePausedUntilByAlias = {
+    ...state.failurePausedUntilByAlias,
+  };
   for (const [alias, reason] of Object.entries(state.lastFailureByAlias)) {
     if (!isInvalidTokenReason(reason)) continue;
     invalidTokenAliases.add(alias);
     delete lastFailureByAlias[alias];
     delete consecutiveFailureCountByAlias[alias];
+    delete failurePausedUntilByAlias[alias];
   }
   return {
     ...state,
     lastFailureByAlias,
     consecutiveFailureCountByAlias,
+    failurePausedUntilByAlias,
     invalidTokenAliases: [...invalidTokenAliases],
   };
 }

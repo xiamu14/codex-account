@@ -18,6 +18,7 @@ const env: NodeJS.ProcessEnv = {
 };
 delete env.PORTLESS_STATE_DIR;
 
+await runPortless(["proxy", "stop", "-p", PROXY_PORT]);
 await runPortless(["proxy", "start", "--no-tls", "--lan", "--ip", lanIp, "-p", PROXY_PORT]);
 await runPortless(["alias", APP_NAME, APP_PORT, "--force"]);
 await syncHosts();

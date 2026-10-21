@@ -2,6 +2,8 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { CommandContext } from "./types.ts";
+import { resolveAppHome } from "./paths.ts";
+import { stopAutoQuotaService } from "./service.ts";
 
 const PORTLESS_PROXY_PORT = 1_355;
 const PORTLESS_NAME = "codexaccount";
@@ -41,10 +43,10 @@ export async function installLaunchdServices(
 }
 
 export async function uninstallLaunchdServices(
-  _context?: CommandContext,
+  context?: CommandContext,
 ): Promise<void> {
   assertMacOS();
-  await stopLaunchdServices();
+  await stopLaunchdServices(context);
   for (const service of buildServices(resolveProjectRoot())) {
     await rm(service.plistPath, { force: true });
   }
@@ -55,19 +57,20 @@ export async function startLaunchdServices(
 ): Promise<void> {
   assertMacOS();
   await installLaunchdServices(context);
+  await stopLaunchdServices(context);
   for (const service of buildServices(resolveProjectRoot())) {
-    await launchctl(["bootout", launchDomain(), service.plistPath], true);
     await launchctl(["bootstrap", launchDomain(), service.plistPath], false);
   }
 }
 
 export async function stopLaunchdServices(
-  _context?: CommandContext,
+  context?: CommandContext,
 ): Promise<void> {
   assertMacOS();
   for (const service of buildServices(resolveProjectRoot())) {
     await launchctl(["bootout", launchDomain(), service.plistPath], true);
   }
+  await stopAutoQuotaService(context?.appHome ?? resolveAppHome());
 }
 
 export function renderServiceStartMessage(cliUsage: string): string {

@@ -1123,6 +1123,9 @@ describe("auto quota commands", () => {
       consecutiveFailureCountByAlias: {
         "old@example.com": 3,
       },
+      failurePausedUntilByAlias: {
+        "old@example.com": futureIso(),
+      },
       lastQuotaFetchAliases: ["work@example.com"],
       invalidTokenAliases: [],
       handledFiveHourResets: {},
@@ -1142,7 +1145,7 @@ describe("auto quota commands", () => {
     expect(output.text).toContain("old@example.com");
     expect(output.text).toContain("读取额度失败");
     expect(output.text).toContain("连续失败 3 次");
-    expect(output.text).toContain("已暂停");
+    expect(output.text).toContain("10 分钟冷却");
     expect(output.text).toMatch(/work@example\.com\s{2,}(今天|明天)/);
     expect(output.text).toMatch(/longer-work@example\.com\s{2,}(今天|明天)/);
   });
@@ -1444,6 +1447,7 @@ async function enableAutoQuota(appHome: string): Promise<void> {
     lastSuccessAliases: [],
     lastFailureByAlias: {},
     consecutiveFailureCountByAlias: {},
+    failurePausedUntilByAlias: {},
     lastQuotaFetchAliases: [],
     invalidTokenAliases: [],
     handledFiveHourResets: {},

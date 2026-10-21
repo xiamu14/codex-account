@@ -76,11 +76,19 @@ export async function unregisterAutoQuotaServiceProcess(
 
 export async function stopAutoQuotaService(appHome: string): Promise<boolean> {
   const pid = await readAutoQuotaPid(appHome);
-  await removePath(autoQuotaPidPath(appHome));
   if (pid === null || !isProcessRunning(pid)) {
+    await removePath(autoQuotaPidPath(appHome));
     return false;
   }
   process.kill(pid, "SIGTERM");
+  const deadline = Date.now() + 5_000;
+  while (isProcessRunning(pid) && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  if (isProcessRunning(pid)) {
+    throw new Error(`quota 后台服务未能停止（PID ${pid}）。`);
+  }
+  await removePath(autoQuotaPidPath(appHome));
   return true;
 }
 

@@ -292,7 +292,7 @@ function QuotaRefreshCard({
         {orderedAccounts.map((account) => (
           <AccountStatusRow
             key={account.alias}
-            description={`下次刷新：${formatDateTime(nextQuotaFetchAt)}`}
+            description={`下次刷新：${formatDateTime(account.nextRefreshAt ?? nextQuotaFetchAt)}`}
             label={formatAccountDisplayName(account.alias)}
             status={
               account.lastQuotaFetchAt === null
