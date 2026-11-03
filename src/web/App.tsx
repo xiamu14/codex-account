@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { fetchResetCredits, type ResetCredits } from "./reset-credits.ts";
+import { useEffect, useRef, useState } from "react";
 import { Popover } from "@heroui/react/popover";
 import { Table } from "@heroui/react/table";
 import { ClockFill } from "@gravity-ui/icons";
@@ -24,16 +25,6 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; status: UiStatus }
   | { kind: "error"; message: string };
-
-type ResetCredits = {
-  available_count: number;
-  credits: Array<{
-    status: string;
-    title: string;
-    granted_at: string;
-    expires_at: string;
-  }>;
-};
 
 type ResetCreditsState =
   | { kind: "idle" }
@@ -635,6 +626,16 @@ function AccountRow({
   account: UiStatus["accounts"][number];
   isLast: boolean;
 }) {
+  const rowRef = useRef<HTMLElement>(null);
+  const [rowWidth, setRowWidth] = useState(0);
+  useEffect(() => {
+    const row = rowRef.current!;
+    const observer = new ResizeObserver(() => {
+      setRowWidth(row.getBoundingClientRect().width);
+    });
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
   const [resetCreditsState, setResetCreditsState] = useState<ResetCreditsState>({
     kind: "idle",
   });
@@ -647,7 +648,7 @@ function AccountRow({
 
   return (
     <>
-      <article aria-disabled={account.isInvalidToken} className="bg-bg-white-0">
+      <article ref={rowRef} aria-disabled={account.isInvalidToken} className="bg-bg-white-0">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 w-full">
             <div className="flex items-center justify-between gap-4">
@@ -657,7 +658,7 @@ function AccountRow({
                 <div className="min-w-0">
                   <Popover
                     onOpenChange={(isOpen) => {
-                      if (isOpen && resetCreditsState.kind === "idle") {
+                      if (isOpen && (resetCreditsState.kind === "idle" || resetCreditsState.kind === "error")) {
                         setResetCreditsState({ kind: "loading" });
                         void fetchResetCredits(account.alias)
                           .then((credits) => {
@@ -675,8 +676,8 @@ function AccountRow({
                     <Popover.Trigger className="max-w-full truncate text-left text-label-md text-text-strong-950 underline-offset-2 hover:underline">
                       {account.name ?? formatAccountDisplayName(account.alias)}
                     </Popover.Trigger>
-                    <Popover.Content className="max-h-[70vh] w-[min(560px,calc(100vw-48px))] overflow-auto rounded-20 border border-stroke-soft-200 bg-bg-white-0 p-4 shadow-regular-lg">
-                      <Popover.Dialog>
+                    <Popover.Content placement="bottom start" style={{ maxWidth: rowWidth }} className="max-h-[70vh] w-[min(360px,calc(100vw-48px))] overflow-auto rounded-20 border border-stroke-soft-200 bg-bg-white-0 p-4 shadow-[0_12px_32px_-4px_#0e121b24,0_2px_8px_#0e121b0f]">
+                      <Popover.Dialog className="outline-none focus:outline-none focus-visible:outline-none">
                         <ResetCreditsPopoverContent state={resetCreditsState} />
                       </Popover.Dialog>
                     </Popover.Content>
@@ -769,7 +770,6 @@ function ResetCreditsPopoverContent({ state }: { state: ResetCreditsState }) {
             <Table.Header className="text-center text-label-sm">
               <Table.Column isRowHeader className="py-2 text-center">#</Table.Column>
               <Table.Column className="py-2 text-center">status</Table.Column>
-              <Table.Column className="py-2 text-center">granted_at</Table.Column>
               <Table.Column className="py-2 text-center">expires_at</Table.Column>
             </Table.Header>
             <Table.Body>
@@ -777,7 +777,6 @@ function ResetCreditsPopoverContent({ state }: { state: ResetCreditsState }) {
               <Table.Row className="border-b border-stroke-soft-200 last:border-0" key={`${credit.granted_at}:${index}`}>
                 <Table.Cell className="py-3 text-center align-top">{index + 1}</Table.Cell>
                 <Table.Cell className="py-3 text-center align-top">{credit.status}</Table.Cell>
-                <Table.Cell className="py-3 text-center align-top">{formatFullDateTime(credit.granted_at)}</Table.Cell>
                 <Table.Cell className="py-3 text-center align-top">{formatFullDateTime(credit.expires_at)}</Table.Cell>
               </Table.Row>
             ))}
@@ -1076,16 +1075,6 @@ async function activateAccount(alias: string): Promise<UiStatus> {
   return (await response.json()) as UiStatus;
 }
 
-async function fetchResetCredits(alias: string): Promise<ResetCredits> {
-  const response = await fetch(
-    `/api/reset-credits?alias=${encodeURIComponent(alias)}`,
-  );
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message.trim() || `读取 reset credits 失败：${response.status}`);
-  }
-  return (await response.json()) as ResetCredits;
-}
 
 function formatFailureReason(value: string): string {
   const normalized = value.trim().replace(/[。.]$/, "");
