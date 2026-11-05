@@ -429,7 +429,7 @@ function AccountsCard({ accounts }: { accounts: UiStatus["accounts"] }) {
             还没有保存账号
           </div>
         ) : (
-          <div className="px-4">
+          <div>
             {sortAccountsForDisplay(accounts).map(
               (account, index, sortedAccounts) => (
                 <AccountRow
