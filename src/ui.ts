@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { readAcpResetCredits } from "./acp.ts";
 import {
   AUTO_QUOTA_MAX_INTERVAL_MINUTES,
   AUTO_QUOTA_MIN_INTERVAL_MINUTES,
@@ -18,9 +19,8 @@ import {
   buildAutoQuotaSchedule,
   retryFailedQuotaCommand,
 } from "./commands.ts";
-import { readJsonIfExists } from "./fs.ts";
-import { isNumber, isRecord, isString } from "./guards.ts";
-import { accountAuthPath } from "./paths.ts";
+import { cleanupRunHome, persistRotatedAcpAuth, prepareAcpHome } from "./codex.ts";
+import { withLock } from "./lock.ts";
 import { recoverAutoQuotaServiceIfNeeded } from "./service.ts";
 import { AccountStore, assertAlias } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
@@ -57,6 +57,9 @@ export async function uiCommand(
       }
       return c.json(await readResetCredits(context, alias));
     } catch (error) {
+      if (isLockBusyError(error)) {
+        return c.text("后台正在刷新额度，请稍后再试。", 409);
+      }
       return c.text(
         error instanceof Error ? error.message : String(error),
         500,
@@ -157,7 +160,12 @@ export async function uiCommand(
   Bun.serve({
     hostname: "127.0.0.1",
     port: UI_APP_PORT,
-    fetch: app.fetch,
+    fetch(request, server) {
+      if (new URL(request.url).pathname === "/api/reset-credits") {
+        server.timeout(request, 85);
+      }
+      return app.fetch(request);
+    },
   });
 
   context.stdout.write(
@@ -166,57 +174,30 @@ export async function uiCommand(
   await new Promise(() => undefined);
 }
 
-type ResetCreditsSummary = {
-  available_count: number;
-  credits: Array<{
-    status: string;
-    title: string;
-    granted_at: string;
-    expires_at: string;
-  }>;
-};
-
 async function readResetCredits(
   context: CommandContext,
   alias: string,
-): Promise<ResetCreditsSummary> {
+) {
   assertAlias(alias);
-  const auth = await readJsonIfExists(accountAuthPath(context.appHome, alias));
-  const accessToken = isRecord(auth) && isRecord(auth.tokens) && isString(auth.tokens.access_token)
-    ? auth.tokens.access_token
-    : null;
-  if (accessToken === null) {
-    throw new Error("没有找到该账号的 access_token。");
-  }
-
-  const response = await fetch("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`读取 reset credits 失败：${response.status}`);
-  }
-  return parseResetCredits(await response.json());
-}
-
-function parseResetCredits(value: unknown): ResetCreditsSummary {
-  if (!isRecord(value)) return { available_count: 0, credits: [] };
-  const credits = Array.isArray(value.credits) ? value.credits : [];
-  return {
-    available_count: isNumber(value.available_count) ? value.available_count : 0,
-    credits: credits.filter(isRecord).map((credit) => ({
-      status: pickString(credit.status),
-      title: pickString(credit.title),
-      granted_at: pickString(credit.granted_at),
-      expires_at: pickString(credit.expires_at),
-    })),
-  };
-}
-
-function pickString(value: unknown): string {
-  return isString(value) ? value : "";
+  return withLock(context.appHome, async () => {
+    const store = new AccountStore(context.appHome);
+    const authPath = await store.authPath(alias);
+    const originalAuth = await readFile(authPath, "utf8");
+    const runHome = await prepareAcpHome({
+      appHome: context.appHome,
+      codexHome: context.codexHome,
+      authPath,
+    });
+    try {
+      return await readAcpResetCredits(context.codexBin, runHome, context.cwd);
+    } finally {
+      try {
+        await persistRotatedAcpAuth(authPath, runHome, originalAuth);
+      } finally {
+        await cleanupRunHome(runHome);
+      }
+    }
+  }, { waitMs: UI_LOCK_WAIT_MS });
 }
 
 function isLockBusyError(error: unknown): boolean {

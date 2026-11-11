@@ -145,6 +145,48 @@ export async function readAcpAccount(
   return parseAccountInfo(message.result);
 }
 
+export async function readAcpResetCredits(
+  codexBin: string,
+  codexHome: string,
+  cwd: string,
+) {
+  const output = await runAppServerRequests(
+    codexBin,
+    codexHome,
+    cwd,
+    [methodCall(2, "account/rateLimits/read")],
+    [2],
+  ).catch(() => {
+    throw new Error("Codex CLI 未能返回重置额度。");
+  });
+  const message = parseJsonLines(output).find((item) => item.id === 2);
+  if (!message || message.error !== undefined) {
+    throw new Error("Codex CLI 未能返回重置额度。");
+  }
+  return parseResetCredits(message.result);
+}
+
+export function parseResetCredits(value: unknown) {
+  const summary = isRecord(value) ? value.rateLimitResetCredits : null;
+  if (!isRecord(summary) || !isNumber(summary.availableCount)) {
+    throw new Error("Codex CLI 未提供重置额度数据。");
+  }
+  const credits = Array.isArray(summary.credits) ? summary.credits : [];
+  return {
+    available_count: summary.availableCount,
+    credits: credits.filter(isRecord).map((credit) => ({
+      status: pickString(credit, ["status"]) ?? "",
+      title: pickString(credit, ["title"]) ?? "",
+      granted_at: formatResetCreditTime(credit.grantedAt),
+      expires_at: formatResetCreditTime(credit.expiresAt),
+    })),
+  };
+}
+
+function formatResetCreditTime(value: unknown): string {
+  return isNumber(value) ? new Date(value * 1_000).toJSON() ?? "" : "";
+}
+
 async function runAppServerRequests(
   codexBin: string,
   codexHome: string,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseAccountInfo, parseQuota } from '../src/acp.ts';
+import { parseAccountInfo, parseQuota, parseResetCredits } from '../src/acp.ts';
 
 describe('ACP parsers', () => {
   test('parses account/read response payload', () => {
@@ -65,5 +65,28 @@ describe('ACP parsers', () => {
     expect(quota.fiveHour).toBeNull();
     expect(quota.weekly?.percentLeft).toBe(100);
     expect(quota.weekly?.windowDurationMins).toBe(10080);
+  });
+
+  test('maps CLI reset credits to the web payload', () => {
+    expect(parseResetCredits({
+      rateLimitResetCredits: {
+        availableCount: 1,
+        credits: [{ status: 'available', grantedAt: 1780272000, expiresAt: null }],
+      },
+    })).toEqual({
+      available_count: 1,
+      credits: [{
+        status: 'available',
+        title: '',
+        granted_at: '2026-06-01T00:00:00.000Z',
+        expires_at: '',
+      }],
+    });
+    expect(parseResetCredits({
+      rateLimitResetCredits: { availableCount: 2, credits: null },
+    })).toEqual({ available_count: 2, credits: [] });
+    expect(() => parseResetCredits({ rateLimitResetCredits: null })).toThrow(
+      'Codex CLI 未提供重置额度数据。',
+    );
   });
 });
