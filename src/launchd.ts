@@ -76,7 +76,8 @@ export async function stopLaunchdServices(
 export function renderServiceStartMessage(cliUsage: string): string {
   return [
     "Web UI:",
-    `  http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`,
+    "  http://127.0.0.1:41739",
+    `  http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT} (需在 portlan 中启动代理)`,
     "",
     "CLI:",
     cliUsage,
@@ -109,7 +110,9 @@ export function buildServices(projectRoot: string): LaunchdService[] {
       plistPath: path.join(launchAgentsRoot(), `${WEB_LABEL}.plist`),
       programArguments: [
         process.execPath,
-        path.join(projectRoot, "scripts", "portless-lan.ts"),
+        entrypoint,
+        "ui",
+        "--serve",
       ],
     },
   ];
@@ -127,9 +130,6 @@ function renderPlist(options: {
     CXA_CODEX_BIN: options.context.codexBin,
     CXA_HOME: options.context.appHome,
     PATH: renderLaunchdPath(options.context),
-    PORTLESS_HTTPS: "0",
-    PORTLESS_LAN: "1",
-    PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
   };
 
   return [

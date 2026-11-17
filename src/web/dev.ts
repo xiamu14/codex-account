@@ -3,8 +3,6 @@ import path from "node:path";
 
 const UI_APP_PORT = 41_739;
 const VITE_DEV_PORT = 41_740;
-const PORTLESS_PROXY_PORT = 1_355;
-const PORTLESS_NAME = "codexaccount";
 const projectRoot = path.resolve(import.meta.dir, "..", "..");
 const children: ChildProcess[] = [];
 let shuttingDown = false;
@@ -12,12 +10,7 @@ let shuttingDown = false;
 function run(label: string, command: string, args: string[]): ChildProcess {
   const child = spawn(command, args, {
     cwd: projectRoot,
-    env: {
-      ...process.env,
-      PORTLESS_HTTPS: "0",
-      PORTLESS_LAN: "1",
-      PORTLESS_PORT: String(PORTLESS_PROXY_PORT),
-    },
+    env: process.env,
     stdio: "inherit",
   });
   children.push(child);
@@ -54,7 +47,7 @@ process.once("SIGTERM", () => {
   process.exitCode = 143;
 });
 
-const publicUrl = `http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT}`;
+const publicUrl = `http://127.0.0.1:${VITE_DEV_PORT}`;
 
 run("Hono UI 服务", process.execPath, ["run", "src/main.ts", "ui", "--serve"]);
 run("Tailwind", process.execPath, [
@@ -66,12 +59,7 @@ run("Tailwind", process.execPath, [
   "src/web/static/alignui.css",
   "--watch",
 ]);
-run("Portless + Vite", "portless", [
-  PORTLESS_NAME,
-  "--app-port",
-  String(VITE_DEV_PORT),
-  "--",
-  process.execPath,
+run("Vite", process.execPath, [
   "run",
   "vite",
   "--host",

@@ -3,21 +3,16 @@ import path from "node:path";
 import { buildServices } from "../src/launchd.ts";
 
 describe("launchd services", () => {
-  test("runs the independent LAN UI launcher", () => {
+  test("runs the UI server directly without managing the proxy", () => {
     const projectRoot = "/tmp/codex-account";
     const webService = buildServices(projectRoot).find((service) =>
-      service.programArguments.some((argument) => argument.endsWith("/portless-lan.ts")),
+      service.label === "com.codex-account.web",
     );
-
     expect(webService?.programArguments).toEqual([
       process.execPath,
-      path.join(projectRoot, "scripts", "portless-lan.ts"),
+      path.join(projectRoot, "src", "main.ts"),
+      "ui",
+      "--serve",
     ]);
-    expect(webService?.programArguments).not.toContain(
-      path.join(projectRoot, "node_modules", ".bin", "portless"),
-    );
-    expect(webService?.programArguments).not.toContain(
-      path.join(projectRoot, "node_modules", "portless", "dist", "cli.js"),
-    );
   });
 });
