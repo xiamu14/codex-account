@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
-const UI_APP_PORT = 41_739;
+const UI_APP_PORT = 3011;
 const VITE_DEV_PORT = 41_740;
 const projectRoot = path.resolve(import.meta.dir, "..", "..");
 const children: ChildProcess[] = [];

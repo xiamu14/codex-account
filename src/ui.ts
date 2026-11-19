@@ -26,7 +26,7 @@ import { AccountStore, assertAlias } from "./store.ts";
 import type { AutoQuotaState, CommandContext } from "./types.ts";
 import type { UiStatus } from "./ui-status.ts";
 
-const UI_APP_PORT = 41_739;
+const UI_APP_PORT = 3011;
 const UI_EVENT_INTERVAL_MS = 5_000;
 const UI_EVENT_HEARTBEAT_DATA = "ok";
 const UI_LOCK_WAIT_MS = 30_000;

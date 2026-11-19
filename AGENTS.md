@@ -42,7 +42,7 @@ bun cli refresh --auto --dryRun
 
 `start` 会启动：
 
-- Web UI 服务（127.0.0.1:41739）
+- Web UI 服务（127.0.0.1:3011）
 - quota 后台服务
 
 启动后访问：

@@ -76,7 +76,7 @@ export async function stopLaunchdServices(
 export function renderServiceStartMessage(cliUsage: string): string {
   return [
     "Web UI:",
-    "  http://127.0.0.1:41739",
+    "  http://127.0.0.1:3011",
     `  http://${PORTLESS_NAME}.local:${PORTLESS_PROXY_PORT} (需在 portlan 中启动代理)`,
     "",
     "CLI:",

@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const apiOrigin = "http://127.0.0.1:41739";
+const apiOrigin = "http://127.0.0.1:3011";
 
 export default defineConfig({
   root: "src/web",
